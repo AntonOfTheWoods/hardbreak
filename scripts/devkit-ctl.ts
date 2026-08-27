@@ -31,6 +31,8 @@ const USAGE = `usage: bun run devkit:ctl <command>
   gsettings <args...>   raw gsettings passthrough (devkit bus + devkit db)
   fast                  re-apply the fast test schedule
   defaults              gsettings reset-recursively ${SCHEMA}
+  eval <js>             run JS inside the nested Shell (needs HARDBREAK_DEVKIT_UNSAFE=1
+                        at launch); \`Main\` is in scope, the result is printed as JSON
 
 All of these act on the running devkit only; the live session is untouched.`;
 
@@ -77,6 +79,26 @@ if (command === 'gsettings') {
 }
 
 if (command === 'defaults') exec(['gsettings', 'reset-recursively', SCHEMA]);
+
+if (command === 'eval') {
+  if (rest.length === 0) fail(`devkit:ctl: eval takes a JS expression\n\n${USAGE}`);
+  // `org.gnome.Shell.Eval` is a direct `eval` in ui/shellDBus.js (so `Main`
+  // is in scope) that JSON-encodes the result; it returns (false, '') unless
+  // the Shell was started with --unsafe-mode.
+  const js = rest.join(' ');
+  exec([
+    'gdbus',
+    'call',
+    '--session',
+    '--dest',
+    'org.gnome.Shell',
+    '--object-path',
+    '/org/gnome/Shell',
+    '--method',
+    'org.gnome.Shell.Eval',
+    js,
+  ]);
+}
 
 if (command === 'fast') {
   for (const [key, value] of FAST_SCHEDULE) {

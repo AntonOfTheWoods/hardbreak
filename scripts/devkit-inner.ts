@@ -89,7 +89,11 @@ if (dryRun) {
   process.exit(0);
 }
 
-const shell = Bun.spawnSync(['gnome-shell', '--devkit'], {
+// HARDBREAK_DEVKIT_UNSAFE=1 enables org.gnome.Shell.Eval (`devkit:ctl eval`),
+// which is refused otherwise. Nested Shell only; never the live session.
+const unsafe = process.env['HARDBREAK_DEVKIT_UNSAFE'] === '1';
+if (unsafe) console.log('HARDBREAK_DEVKIT_UNSAFE=1 — Eval enabled in the nested Shell');
+const shell = Bun.spawnSync(['gnome-shell', '--devkit', ...(unsafe ? ['--unsafe-mode'] : [])], {
   cwd: root,
   env: process.env as Record<string, string>,
   stdin: 'inherit',

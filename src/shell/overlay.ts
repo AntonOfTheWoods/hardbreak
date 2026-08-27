@@ -102,7 +102,9 @@ export class Overlay {
     // Assigned before the Shell calls below so that a throw in any of them
     // still leaves `hide()` able to clean the actor up.
     this.group = group;
-    Main.layoutManager.addTopChrome(group, { affectsInputRegion: true });
+    // No params: Shell 50's chrome tracker only knows `trackFullscreen` and
+    // `affectsStruts`, and rejects anything else ("Unrecognized parameter").
+    Main.layoutManager.addTopChrome(group);
     this.buildMonitors();
     this.grab = Main.pushModal(group, { actionMode: Shell.ActionMode.NONE });
 

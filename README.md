@@ -70,6 +70,7 @@ bun run devkit:ctl set mini-interval 1     # org.melser.hardbreak keys, in the d
 bun run devkit:ctl get mini-interval
 bun run devkit:ctl fast                    # re-apply the fast schedule
 bun run devkit:ctl defaults                # reset every hardbreak key
+bun run devkit:ctl eval 'Main.modalCount'  # JS inside the nested Shell; needs HARDBREAK_DEVKIT_UNSAFE=1 bun run devkit
 bun run devkit:reset                       # delete the devkit db (next launch = first run)
 ```
 

@@ -222,7 +222,7 @@ The 30 s margin is a constant (`WATCHDOG_MARGIN_MS`), not a setting (spec §2).
 - **notifier** — `MessageTray.getSystemSource()` + `new MessageTray.Notification({source, title,
   body, isTransient: true})`; keep the reference and `destroy()` it when the break starts.
 - **overlay** — a reactive `St.Widget` group sized to `global.stage`, added with
-  `Main.layoutManager.addTopChrome(group, {affectsInputRegion: true})`; one child per
+  `Main.layoutManager.addTopChrome(group)` (no params — Shell 50 only accepts `trackFullscreen`/`affectsStruts`); one child per
   `Main.layoutManager.monitors` entry (`x, y, width, height`) with inline style
   `background-color: rgba(r,g,b,opacity)` from `overlay-color`/`overlay-opacity`; centred vertical
   box with countdown label, idea title + body labels, and the postpone `St.Button`. Then
