@@ -15,6 +15,7 @@
     "check": "bun run typecheck && bun run lint && bun run test",
     "validate": "bun run format && bun run check",
     "build": "bun run scripts/build.ts",
+    "pack": "bun run scripts/pack.ts",
     "install:ext": "bun run scripts/install-ext.ts",
     "uninstall:ext": "bun run scripts/uninstall-ext.ts",
     "devkit": "bun run scripts/devkit.ts",

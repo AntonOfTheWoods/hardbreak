@@ -1,7 +1,8 @@
 /**
- * Virtual time for the unit tests. Ships with the extension (a few hundred
- * bytes of dead code in `dist/`) rather than living outside `src/`, so the
- * tsconfig that type-checks the core covers it too.
+ * Virtual time for the unit tests. It lives under `src/` rather than outside it
+ * so the tsconfig that type-checks the core covers it too, but it is excluded
+ * from `tsconfig.build.json`: test scaffolding must never reach `dist/` and
+ * therefore never reach the published zip.
  */
 
 import type { Clock, TimerHandle, Timers } from './types.js';

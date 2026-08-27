@@ -1,0 +1,44 @@
+name: ci
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      # glib-compile-schemas (libglib2.0-bin) is the only system tool the build
+      # needs. `gnome-extensions` lives in the gnome-shell package — a few
+      # hundred megabytes of compositor for a headless runner — so `pack` falls
+      # back to zip here and verifies the bundle either way.
+      - name: Install the schema compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libglib2.0-bin zip unzip
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run validate
+
+      - run: bun run pack
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hardbreak-shell-extension
+          path: tmp/pack/hardbreak@melser.org.shell-extension.zip
+          if-no-files-found: error

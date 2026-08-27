@@ -29,7 +29,7 @@ src/
 schemas/org.melser.hardbreak.gschema.xml
 assets/ideas.json  assets/crystal-glass.wav
 metadata.json  stylesheet.css
-scripts/build.ts  scripts/install-ext.ts  scripts/uninstall-ext.ts  scripts/install-hooks.ts
+scripts/build.ts  scripts/pack.ts  scripts/install-ext.ts  scripts/uninstall-ext.ts  scripts/install-hooks.ts
 ```
 
 `tsc` emits `src/**` → `dist/**` (same tree). `scripts/build.ts` then copies `metadata.json`,
@@ -59,6 +59,7 @@ Units are chosen so `Gio.Settings.bind()` works without mapping code in prefs.
 | `overlay-opacity` | d | 0.9 | 0..1 | |
 | `end-sound` | s | `crystal-glass.wav` | | relative → `<extension dir>/assets/<name>`; absolute path used verbatim; empty = silent |
 | `breaks-enabled` | b | true | | the panel-menu Disable toggle; persisted so a Shell restart keeps the choice |
+| `first-run-done` | b | false | | set by `enable()` after the one-off notice explaining that breaks cannot be skipped and how to recover a wedged session; set back to false to see it again |
 
 `ScheduleSettings` (core) is the milliseconds/fraction form of the first 11 keys:
 
@@ -221,6 +222,8 @@ The 30 s margin is a constant (`WATCHDOG_MARGIN_MS`), not a setting (spec §2).
   `scheduler.setDnd(!showBanners)` on connect and on change.
 - **notifier** — `MessageTray.getSystemSource()` + `new MessageTray.Notification({source, title,
   body, isTransient: true})`; keep the reference and `destroy()` it when the break starts.
+  Also `postNotice(title, body, log)`: a non-transient `Urgency.CRITICAL` notification that
+  nothing holds a reference to, used once for the first-run notice.
 - **overlay** — a reactive `St.Widget` group sized to `global.stage`, added with
   `Main.layoutManager.addTopChrome(group)` (no params — Shell 50 only accepts `trackFullscreen`/`affectsStruts`); one child per
   `Main.layoutManager.monitors` entry (`x, y, width, height`) with inline style
@@ -257,7 +260,8 @@ The 30 s margin is a constant (`WATCHDOG_MARGIN_MS`), not a setting (spec §2).
   fresh cycle — `locked-changed` would never be seen and spec §3's "away < idle-reset →
   resume" would be unreachable for lock and suspend.
 - **extension.ts** — `enable()`: settings → scheduler → controller → presence → indicator →
-  `scheduler.start()`. `disable()`: reverse order; `controller.forceRelease('disable')` if a break
+  `scheduler.start()` → the first-run notice (`first-run-done`, guarded: it must never fail
+  `enable()`). `disable()`: reverse order; `controller.forceRelease('disable')` if a break
   is running; disconnect every signal; null every field (GNOME review rules).
 
 ## 6. Tooling
@@ -273,12 +277,17 @@ The 30 s margin is a constant (`WATCHDOG_MARGIN_MS`), not a setting (spec §2).
 | `check` | typecheck + lint + test |
 | `validate` | format + check (pre-commit hook, installed by `prepare`) |
 | `build` | `bun run scripts/build.ts` |
+| `pack` | `bun run scripts/pack.ts` — build, then `gnome-extensions pack` (or a plain `zip` where that tool is absent) into `tmp/pack/`, then verify the bundle against an explicit required/forbidden file list |
 | `install:ext` / `uninstall:ext` | symlink / unlink `dist/` ↔ `~/.local/share/gnome-shell/extensions/hardbreak@melser.org` |
 | `devkit` | `dbus-run-session -- gnome-shell --devkit` |
 | `logs` | `journalctl -f -o cat /usr/bin/gnome-shell` |
 
 (`install`/`uninstall` from spec §8 are named `install:ext`/`uninstall:ext` because bun treats a
 root `install` script as a lifecycle hook of `bun install`.)
+
+CI (`.github/workflows/`): `ci.yml` runs `validate` + `pack` on pushes to `develop`/`main` and on
+pull requests and uploads the zip; `release.yml` does the same on a `v*` tag and attaches the zip
+to a GitHub release with the tag message as the notes.
 
 Two tsconfigs: `tsconfig.json` covers `src/core/**` including tests with `types: ["bun"]`;
 `tsconfig.build.json` covers `src/**` minus tests with `types: []` and the `@girs` ambient

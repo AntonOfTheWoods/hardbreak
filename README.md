@@ -1,53 +1,212 @@
 # hardbreak
 
-A GNOME Shell extension (`hardbreak@melser.org`) that enforces screen breaks with an
-undismissable full-screen overlay on every monitor — a zero-process replacement for
-[Stretchly](https://github.com/hovancik/stretchly).
+A GNOME Shell extension that makes you take screen breaks. At the appointed time it covers
+every monitor with an overlay you cannot dismiss, cannot alt-tab away from and cannot close
+— it goes away when the break is over, and not before. Because it runs inside gnome-shell
+itself it adds no processes, no tray app and no background service: the whole thing is the
+Shell's own timers and actors.
 
-Breaks are **hard**: no skip, no dismiss, no escape chord. A mini break every half hour, a
-long one on the hour (both configurable), with a warning notification beforehand and a
-postpone button that only works during the first third of the break. The only way out is
-the watchdog, which releases the overlay on an independent deadline or on any exception.
+It exists because [Stretchly](https://github.com/hovancik/stretchly) — the obvious choice
+otherwise — is an Electron app (five Chromium processes, ~287 MB) whose "strict mode" is
+still just a fullscreen window on Wayland: `Super` and `Alt+Tab` walk straight out of it.
+Under Wayland only the compositor can genuinely hold the screen, and on GNOME the only way
+to run code in the compositor is an extension.
 
-Targets GNOME Shell 50 on Wayland. Local install only; not published to
-extensions.gnome.org.
+GNOME Shell 50, Wayland. Tested on Ubuntu 26.04.
 
-## Build and install
+## Before you install
+
+**This is hard mode, and it is the entire point.** There is no skip button, no dismiss, no
+escape key and no secret chord. While a break is up, the screen is not yours.
+
+What you _do_ get:
+
+- the **panel menu** (the alarm icon in the top bar): Pause 1 hour, Pause 2 hours, Pause
+  until tomorrow, Reset, and a **Breaks** switch that turns the whole thing off. It is
+  reachable between breaks — during a break the overlay has the input grab, so nothing in
+  the panel is clickable;
+- **Do Not Disturb**: turning it on in Quick Settings pauses hardbreak completely. This is
+  the one-toggle guard before you present on a projector;
+- a **postpone** button on the overlay itself, once per break, and only during the first
+  30 % of it (+2 minutes for a mini break, +5 for a long one; all three configurable);
+- the **watchdog**: an independent deadline that takes the overlay down 30 seconds after
+  the break should have ended, and takes it down immediately if anything in the break code
+  throws. It is the safety net, and it is deliberately not user-configurable.
+
+If that sounds like more than you want, GNOME 48+ has _Settings → Wellbeing → Break
+Reminders_, which sends notifications you can ignore.
+
+## If your screen stays locked
+
+Ctrl+Alt+F3 still works while the overlay is up — switching virtual terminals is handled
+below the level anything on screen can block. From the text console:
+
+```sh
+DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus \
+  gnome-extensions disable hardbreak@melser.org
+```
+
+Then switch back to your graphical session (usually Ctrl+Alt+F2, sometimes Ctrl+Alt+F1).
+The overlay is gone and breaks are off until you enable the extension again. The
+`DBUS_SESSION_BUS_ADDRESS` part matters: without it `gnome-extensions` on a TTY has no
+session bus to talk to and will do nothing.
+
+If that ever happens, please [open a bug](.github/ISSUE_TEMPLATE/bug_report.md) — the
+watchdog should have released the screen without you.
+
+Related, and normal: **locking the screen or closing the lid interrupts a running break.**
+The overlay must never end up on top of the unlock dialog. The break is owed, not
+forgiven — come back sooner than the "natural break threshold" (5 minutes by default) and
+you get its warning and then the same break again; stay away longer than that and the time
+away counts as the break, so the cycle starts fresh.
+
+## How it works
+
+### The schedule
+
+|                                 | default                 |                                  |
+| ------------------------------- | ----------------------- | -------------------------------- |
+| interval between breaks         | 30 min                  |                                  |
+| mini break                      | 60 s                    | on the half hour                 |
+| long break                      | 3 min                   | on the hour                      |
+| mini breaks between long breaks | 1                       | so they alternate                |
+| warning before a mini break     | 10 s                    | a notification                   |
+| warning before a long break     | 30 s                    |                                  |
+| postpone                        | +2 min / +5 min         | mini / long, once per break      |
+| postpone window                 | first 30 % of the break | after that the button is gone    |
+| natural break threshold         | 5 min                   | time away that counts as a break |
+
+### The overlay
+
+One full-screen actor per monitor (`#633738` at 90 % opacity by default), showing the
+countdown, a suggestion of what to do with the minute — the idea lists live in
+`assets/ideas.json` and can be edited — and the postpone button while it applies. Every
+keybinding is refused while it is up, including the overview key. It ends by itself; a
+sound plays when it does.
+
+### What pauses it
+
+- **Idle.** If you are away from the keyboard for the natural break threshold, the Shell's
+  idle monitor says so and the cycle restarts when you come back: a real break counts.
+  Going idle never interrupts a _running_ break — sitting still is exactly what the
+  overlay is asking for.
+- **Lock and suspend.** Same threshold, but these interrupt a running break, as described
+  above.
+- **Do Not Disturb.** `show-banners` off means no breaks at all, and a fresh cycle when it
+  comes back on.
+- **The panel menu.** Pause 1 h, 2 h, or until tomorrow morning (06:00 by default); Reset
+  starts the current interval again; the Breaks switch stops everything until you flip it
+  back, and survives a reboot.
+
+Every deadline is measured on the monotonic clock, so a suspended laptop does not wake up
+owing you six breaks.
+
+### Why it keeps running on the lock screen
+
+`metadata.json` declares `"session-modes": ["user", "unlock-dialog"]`. Without it GNOME
+disables every extension when the screen locks and enables it again on unlock, which would
+make each lock a fresh cycle and would hide the lock and suspend events the schedule is
+built on. The consequences are the ones you want: the panel icon hides itself on the lock
+screen, and **no break can start while the session is locked**.
+
+## Settings
+
+Through _Extensions → hardbreak → ⚙_, or with `gsettings`/`dconf` under
+`org.melser.hardbreak`.
+
+| key               | unit                                                | default             |
+| ----------------- | --------------------------------------------------- | ------------------- |
+| `mini-interval`   | minutes (1–240)                                     | 30                  |
+| `mini-duration`   | seconds (5–3600)                                    | 60                  |
+| `long-duration`   | seconds (5–3600)                                    | 180                 |
+| `minis-per-long`  | count (0–20); 0 = every break is long               | 1                   |
+| `mini-warning`    | seconds (0–300); 0 = no warning                     | 10                  |
+| `long-warning`    | seconds (0–300); 0 = no warning                     | 30                  |
+| `mini-postpone`   | minutes (0–60); 0 = no postponing minis             | 2                   |
+| `long-postpone`   | minutes (0–60); 0 = no postponing longs             | 5                   |
+| `postpone-window` | percent of the break (0–100); 0 = no postponing     | 30                  |
+| `idle-reset`      | minutes away that count as a break (1–120)          | 5                   |
+| `morning-hour`    | hour, local time (0–23), for "pause until tomorrow" | 6                   |
+| `overlay-color`   | CSS hex                                             | `#633738`           |
+| `overlay-opacity` | 0–1                                                 | 0.9                 |
+| `end-sound`       | file path, or empty for silence                     | `crystal-glass.wav` |
+| `breaks-enabled`  | on/off; the panel switch                            | true                |
+| `first-run-done`  | on/off; set false to see the first-run notice again | false               |
+
+`end-sound` is played when a break **ends**, never when one starts. A bare filename is
+looked up in the extension's own `assets/` directory (that is how the default works); an
+absolute path is used as given — `/usr/share/sounds/freedesktop/stereo/complete.oga` for
+the system chime — and an empty string means silence.
+
+## Install
+
+**From extensions.gnome.org** — pending review; this section will carry the link once it
+is published.
+
+**From a release zip** ([Releases](https://github.com/AntonOfTheWoods/hardbreak/releases)):
+
+```sh
+gnome-extensions install hardbreak@melser.org.shell-extension.zip
+```
+
+Then log out and back in (on Wayland a new extension is only picked up by a fresh session)
+and enable it:
+
+```sh
+gnome-extensions enable hardbreak@melser.org
+```
+
+**From source** — needs [bun](https://bun.sh) 1.4 and `glib-compile-schemas`:
 
 ```sh
 bun install            # also installs the pre-commit hook
 bun run build          # tsc -> dist/, plus assets, schema and glib-compile-schemas
 bun run install:ext    # symlink dist/ into ~/.local/share/gnome-shell/extensions/
-gnome-extensions enable hardbreak@melser.org
 ```
 
-On Wayland a newly added extension is only picked up by a fresh session: log out and back
-in before enabling it for the first time. After that, `bun run build` alone is enough —
-the symlink means the Shell reloads the new code the next time the extension is toggled.
+Log out and back in, then `gnome-extensions enable hardbreak@melser.org`. After that,
+`bun run build` alone is enough — the symlink means the Shell reloads the new code the next
+time the extension is toggled. `bun run uninstall:ext` removes the symlink.
 
-`bun run uninstall:ext` removes the symlink.
+The first time it is enabled, hardbreak posts a notification saying what it is about to do
+and how to get out of it. That is the `first-run-done` setting above.
+
+## Reporting bugs
+
+[Open an issue](https://github.com/AntonOfTheWoods/hardbreak/issues/new?template=bug_report.md);
+the [template](.github/ISSUE_TEMPLATE/bug_report.md) asks for the things that matter: Shell
+version, distribution, Wayland or X11, whether the watchdog released the screen, and
+
+```sh
+journalctl -b -o cat /usr/bin/gnome-shell | grep -i hardbreak
+```
 
 ## Development
 
 ```sh
 bun run validate       # format + typecheck + lint + test (this is the pre-commit hook)
-bun run test           # bun test — the scheduler and watchdog are GJS-free and unit-tested
+bun run test           # the scheduler and watchdog are GJS-free and unit-tested
+bun run build          # dist/
+bun run pack           # tmp/pack/hardbreak@melser.org.shell-extension.zip, verified
 bun run devkit         # nested gnome-shell, isolated bus + isolated dconf db
 bun run devkit:ctl     # drive the running devkit (enable/disable/get/set/...)
 bun run logs           # journalctl -f -o cat /usr/bin/gnome-shell (the LIVE session)
 ```
 
+`bun run pack` rebuilds and then checks the zip it produced: every runtime file must be in
+it, and nothing test-only may be. CI runs `validate` + `pack` on every push and pull
+request and uploads the zip; a `v*` tag additionally publishes a GitHub release with the
+zip attached and the tag message as the notes (`.github/workflows/`).
+
 **Never exercise the overlay on the live session first** — use `bun run devkit`, where a
 bug locks a window rather than the desktop.
-
-## Testing in the devkit
 
 ```sh
 bun run build && bun run install:ext   # once: dist/ -> ~/.local/share/gnome-shell/extensions/
 bun run devkit                         # nested gnome-shell, isolated from the live session
 ```
 
-`bun run devkit` runs the nested Shell under `dbus-run-session` _and_ under its own dconf
+The devkit runs the nested Shell under `dbus-run-session` _and_ under its own dconf
 database (`~/.config/dconf/hardbreak_devkit`, selected with `DCONF_PROFILE`), so:
 
 - **the live session is untouched** — `enabled-extensions` and every `org.melser.hardbreak`
@@ -74,9 +233,9 @@ bun run devkit:ctl eval 'Main.modalCount'  # JS inside the nested Shell; needs H
 bun run devkit:reset                       # delete the devkit db (next launch = first run)
 ```
 
-`bun run devkit:ctl disable` while a wall is up is the standard mid-break teardown test.
-`devkit:reset` refuses while a devkit is running, and only ever removes
-`~/.config/dconf/hardbreak_devkit`.
+`eval` runs arbitrary JS inside the nested Shell, so it is refused unless the devkit was
+started with `HARDBREAK_DEVKIT_UNSAFE=1`. `devkit:reset` refuses while a devkit is running,
+and only ever removes `~/.config/dconf/hardbreak_devkit`.
 
 Two more things worth knowing:
 
@@ -87,17 +246,6 @@ Two more things worth knowing:
   extensions directory at startup. That is why `gnome-extensions enable hardbreak@melser.org`
   typed in an ordinary terminal reports that the extension "doesn't exist"; use
   `bun run devkit:ctl enable` for the devkit.
-
-## Going live
-
-Once the devkit checks pass (watchdog release, exception release, disable mid-break,
-Super/Alt+Tab blocked, postpone window):
-
-1. Log out and back in — the live Shell only scans the extensions directory at startup.
-2. Enable hardbreak in the Extensions app (or `gnome-extensions enable hardbreak@melser.org`).
-
-Stretchly and its apt repository were removed on 2026-08-27, so there is no overlap to
-manage and no rollback to keep.
 
 ## Documentation
 

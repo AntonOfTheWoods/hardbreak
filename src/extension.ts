@@ -14,6 +14,7 @@ import type { IdeaBook, Log } from './core/types.js';
 import { BreakController, type BreakContext } from './shell/breakController.js';
 import { createClock, createLog, createTimers } from './shell/gjsPorts.js';
 import { Indicator } from './shell/indicator.js';
+import { postNotice } from './shell/notifier.js';
 import { Presence } from './shell/presence.js';
 import {
   readOverlayStyle,
@@ -135,6 +136,32 @@ export default class HardbreakExtension extends Extension {
     scheduler.setEnabled(settings.get_boolean('breaks-enabled'));
     presence.enable();
     scheduler.start();
+    this.showFirstRunNotice(settings);
+  }
+
+  /**
+   * Once, ever: tell the user what they have just switched on. An extension
+   * that covers every monitor with something you cannot dismiss has to say so
+   * before it does it for the first time, and has to say how to get out of a
+   * session that will not come back.
+   *
+   * Failing here costs the notice and nothing else — `enable()` must not fall
+   * over because the message tray was unhappy.
+   */
+  private showFirstRunNotice(settings: Gio.Settings): void {
+    try {
+      if (settings.get_boolean('first-run-done')) return;
+      postNotice(
+        'hardbreak is on',
+        'Breaks are undismissable: no skip, no escape key. Pause or switch breaks off from ' +
+          'the alarm icon in the top bar. If the screen ever stays locked, press Ctrl+Alt+F3, ' +
+          'log in and run: gnome-extensions disable hardbreak@melser.org (see README).',
+        this.log,
+      );
+      settings.set_boolean('first-run-done', true);
+    } catch (err) {
+      this.log('hardbreak: could not show the first-run notice', err);
+    }
   }
 
   /** Settings fan-out. The scheduler owns re-planning; presence owns the watch. */

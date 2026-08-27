@@ -98,6 +98,12 @@
       <description>A relative name is resolved against the extension's assets directory; an absolute path is used verbatim; an empty string means silence.</description>
     </key>
 
+    <key name="first-run-done" type="b">
+      <default>false</default>
+      <summary>Whether the first-run notice has been shown</summary>
+      <description>Set to true once the notification explaining that breaks cannot be skipped, and how to recover a wedged session, has been shown. Set it back to false to see that notice again.</description>
+    </key>
+
     <key name="breaks-enabled" type="b">
       <default>true</default>
       <summary>Breaks enabled (on/off)</summary>

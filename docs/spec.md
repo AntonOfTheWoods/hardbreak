@@ -182,6 +182,10 @@ GNOME/Ubuntu LTS for years. The requirement is Stretchly's *behaviour as configu
 Local only. Public GitHub repo, no extensions.gnome.org submission, no release zips.
 Revisit e.g.o only if it is wanted on a second machine (tsc output is review-readable).
 
+*Addendum, 2026-08-27 (decision reversed).* Publish on e.g.o and as GitHub release zips;
+see the README. Remaining decisions for publication: soft/strict switch (Q1 revisit), and
+supported Shell versions (48–50 wanted, only 50 tested).
+
 ## 11. Cut-over from Stretchly (Q12a)
 
 Two enforcers at once = two walls on drifting schedules; overlap must be zero.

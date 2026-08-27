@@ -1,0 +1,48 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The release notes are the annotated tag's own message, so the tag
+          # object itself has to come along.
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Install the schema compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libglib2.0-bin zip unzip
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run validate
+
+      - run: bun run pack
+
+      - name: Take the release notes from the tag message
+        id: notes
+        run: |
+          {
+            echo 'body<<HARDBREAK_NOTES_EOF'
+            git tag --list --format='%(contents)' "${GITHUB_REF_NAME}"
+            echo 'HARDBREAK_NOTES_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          body: ${{ steps.notes.outputs.body }}
+          files: tmp/pack/hardbreak@melser.org.shell-extension.zip
+          fail_on_unmatched_files: true
