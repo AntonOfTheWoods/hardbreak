@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <schemalist>
-  <schema id="org.melser.hardbreak" path="/org/melser/hardbreak/">
+  <schema id="org.gnome.shell.extensions.hardbreak" path="/org/gnome/shell/extensions/hardbreak/">
 
     <key name="strict" type="b">
       <default>false</default>

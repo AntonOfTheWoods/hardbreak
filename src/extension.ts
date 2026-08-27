@@ -33,6 +33,7 @@ export default class HardbreakExtension extends Extension {
   private presence: Presence | null = null;
   private indicator: Indicator | null = null;
   private ideas: IdeaBook = emptyIdeas();
+  private ideasCancellable: Gio.Cancellable | null = null;
 
   override enable(): void {
     this.log = createLog();
@@ -47,6 +48,14 @@ export default class HardbreakExtension extends Extension {
   }
 
   override disable(): void {
+    // Session modes: metadata.json declares `unlock-dialog` so this extension is
+    // NOT disabled when the screen locks. Reason: the schedule must observe
+    // lock/unlock (a short lock resumes the countdown, a long one restarts the
+    // cycle, a lock during a break interrupts it), which is impossible if GNOME
+    // calls disable() on every lock. On the lock screen the panel indicator hides
+    // itself and no break can start (presence marks the session away; the
+    // controller refuses to show the overlay while `Main.screenShield.locked`).
+    // disable() below still tears down everything unconditionally.
     const log = this.log;
 
     // First and foremost: if the wall is up, take it down. This has to happen
@@ -81,6 +90,13 @@ export default class HardbreakExtension extends Extension {
       safely(log, 'disconnecting the settings watch', () => settings.disconnect(settingsChangedId));
     }
 
+    // An idea-book read may still be in flight; its callback checks the token.
+    const ideasCancellable = this.ideasCancellable;
+    this.ideasCancellable = null;
+    if (ideasCancellable) {
+      safely(log, 'cancelling the idea-book read', () => ideasCancellable.cancel());
+    }
+
     this.ideas = emptyIdeas();
     this.log = () => {};
   }
@@ -92,7 +108,9 @@ export default class HardbreakExtension extends Extension {
     const clock = createClock();
     const settings = this.getSettings();
     this.settings = settings;
-    this.ideas = this.loadIdeas(log);
+    // Filled in by the asynchronous read below; empty until it lands.
+    this.ideas = emptyIdeas();
+    this.loadIdeas(log);
 
     // Read fresh at break time, so a settings change lands on the next break
     // without any invalidation bookkeeping.
@@ -198,17 +216,33 @@ export default class HardbreakExtension extends Extension {
   /**
    * `assets/ideas.json` is editable by hand, so a syntax error must cost the
    * ideas and nothing else: `pickIdea` has a built-in fallback for an empty book.
+   *
+   * The read is asynchronous because this runs on the Shell's main loop and
+   * nothing there may block on a disk (e.g.o review rule EGO-X-004). `this.ideas`
+   * stays empty until the read lands; `readContext()` reads the field when a
+   * break starts, which is minutes away at the very least, so the first break
+   * already has the book.
    */
-  private loadIdeas(log: Log): IdeaBook {
+  private loadIdeas(log: Log): void {
     const path = `${this.path}/assets/ideas.json`;
-    try {
-      const [ok, bytes] = Gio.File.new_for_path(path).load_contents(null);
-      if (!ok) throw new Error(`could not read ${path}`);
-      return parseIdeaBook(JSON.parse(new TextDecoder().decode(bytes)));
-    } catch (err) {
-      log(`hardbreak: falling back to the built-in idea, ${path} is unusable`, err);
-      return emptyIdeas();
-    }
+    const file = Gio.File.new_for_path(path);
+    const cancellable = new Gio.Cancellable();
+    this.ideasCancellable = cancellable;
+
+    file.load_contents_async(cancellable, (source, result) => {
+      // `disable()` may have run while the read was in flight: the extension is
+      // torn down, `log` is dead and `this.ideas` must stay empty.
+      if (cancellable.is_cancelled() || this.settings === null) return;
+      this.ideasCancellable = null;
+      try {
+        const [ok, bytes] = (source ?? file).load_contents_finish(result);
+        if (!ok) throw new Error(`could not read ${path}`);
+        this.ideas = parseIdeaBook(JSON.parse(new TextDecoder().decode(bytes)));
+      } catch (err) {
+        log(`hardbreak: falling back to the built-in idea, ${path} is unusable`, err);
+        this.ideas = emptyIdeas();
+      }
+    });
   }
 }
 

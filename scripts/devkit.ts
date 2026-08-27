@@ -5,7 +5,7 @@
  * Isolation has two halves:
  *   - `dbus-run-session` gives the nested Shell its own session bus;
  *   - `DCONF_PROFILE` points dconf at `~/.config/dconf/hardbreak_devkit`, so
- *     `enabled-extensions` and every `org.melser.hardbreak` key written in
+ *     `enabled-extensions` and every `org.gnome.shell.extensions.hardbreak` key written in
  *     there never touch the live desktop's settings.
  *
  * Seeding has to happen on the nested bus (that is where `gsettings` activates

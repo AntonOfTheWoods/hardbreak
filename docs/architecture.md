@@ -26,19 +26,22 @@ src/
     indicator.ts             PanelMenu.Button + menu
   extension.ts               Extension subclass: wires everything in enable(), tears down in disable()
   prefs.ts                   ExtensionPreferences (libadwaita)
-schemas/org.melser.hardbreak.gschema.xml
+schemas/org.gnome.shell.extensions.hardbreak.gschema.xml
 assets/ideas.json  assets/crystal-glass.wav
 metadata.json  stylesheet.css
 scripts/build.ts  scripts/pack.ts  scripts/install-ext.ts  scripts/uninstall-ext.ts  scripts/install-hooks.ts
 ```
 
-`tsc` emits `src/**` → `dist/**` (same tree). `scripts/build.ts` then copies `metadata.json`,
-`stylesheet.css`, `assets/`, `schemas/*.xml` into `dist/` and runs `glib-compile-schemas
-dist/schemas`. `dist/` is symlinked to `~/.local/share/gnome-shell/extensions/hardbreak@melser.org`.
+`tsc` emits `src/**` → `dist/**` (same tree) minus `core/types.js`, which `scripts/build.ts`
+deletes: `types.ts` exports types only, so the emitted module is empty and unreachable from
+`extension.js`/`prefs.js`, which e.g.o rejects (EGO-P-007). The delete is guarded — the build
+fails if that file ever gains a runtime statement or an importer. `scripts/build.ts` then copies
+`metadata.json`, `stylesheet.css`, `assets/`, `schemas/*.xml` into `dist/` and runs
+`glib-compile-schemas dist/schemas`. `dist/` is symlinked to `~/.local/share/gnome-shell/extensions/hardbreak@melser.org`.
 Relative imports are written with `.js` extensions (`./core/scheduler.js`) so the emitted ESM
 loads unmodified in GJS.
 
-## 2. Settings — `org.melser.hardbreak`, path `/org/melser/hardbreak/`
+## 2. Settings — `org.gnome.shell.extensions.hardbreak`, path `/org/gnome/shell/extensions/hardbreak/`
 
 Units are chosen so `Gio.Settings.bind()` works without mapping code in prefs.
 
@@ -275,14 +278,18 @@ The 30 s margin is a constant (`WATCHDOG_MARGIN_MS`), not a setting (spec §2).
   system disables every extension on lock and enables it again on unlock (`ExtensionManager`
   `_sessionUpdated`), so every lock would be a `disable()`/`enable()` pair and therefore a
   fresh cycle — `locked-changed` would never be seen and spec §3's "away < idle-reset →
-  resume" would be unreachable for lock and suspend.
+  resume" would be unreachable for lock and suspend. That reason is repeated as a comment at
+  the top of `disable()`, where e.g.o's review tooling looks for it (EGO-M-008).
 - **extension.ts** — `enable()`: settings → scheduler → controller → presence → indicator →
   `scheduler.start()` → the first-run notice (`first-run-done`, guarded: it must never fail
   `enable()`; its wording follows `readStrict(settings)` at enable time, since it is shown
   once and must not promise a Skip button that is switched off). `readContext()` fills
-  `strict` alongside the other break-time fields. `disable()`: reverse order;
-  `controller.forceRelease('disable')` if a break is running; disconnect every signal; null
-  every field (GNOME review rules).
+  `strict` alongside the other break-time fields. `assets/ideas.json` is read with
+  `Gio.File.load_contents_async` under a `Gio.Cancellable` — no synchronous IO on the main
+  loop (EGO-X-004) — so `ideas` starts empty and is filled when the read lands; the callback
+  does nothing if it fires after teardown. `disable()`: reverse order;
+  `controller.forceRelease('disable')` if a break is running; disconnect every signal; cancel
+  the idea-book read; null every field (GNOME review rules).
 - **prefs.ts** — first group is **Enforcement**, an `Adw.SwitchRow` bound to `strict`; its
   subtitle says the change applies from the next break and repeats the Ctrl+Alt+F3 recovery,
   because this is the switch that removes every other way out of a running break. The
@@ -300,8 +307,8 @@ The 30 s margin is a constant (`WATCHDOG_MARGIN_MS`), not a setting (spec §2).
 | `test` | `bun test` |
 | `check` | typecheck + lint + test |
 | `validate` | format + check (pre-commit hook, installed by `prepare`) |
-| `build` | `bun run scripts/build.ts` |
-| `pack` | `bun run scripts/pack.ts` — build, then `gnome-extensions pack` (or a plain `zip` where that tool is absent) into `tmp/pack/`, then verify the bundle against an explicit required/forbidden file list |
+| `build` | `bun run scripts/build.ts` — tsc, drop the unreachable `core/types.js`, copy assets/schema, `glib-compile-schemas` |
+| `pack` | `bun run scripts/pack.ts` — build, then `gnome-extensions pack` (or a plain `zip` where that tool is absent) into `tmp/pack/`, then verify the bundle against an explicit required/forbidden file list (`core/types.js` is on the forbidden side) |
 | `install:ext` / `uninstall:ext` | symlink / unlink `dist/` ↔ `~/.local/share/gnome-shell/extensions/hardbreak@melser.org` |
 | `devkit` | `dbus-run-session -- gnome-shell --devkit` |
 | `logs` | `journalctl -f -o cat /usr/bin/gnome-shell` |

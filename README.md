@@ -128,7 +128,10 @@ screen, and **no break can start while the session is locked**.
 ## Settings
 
 Through _Extensions → hardbreak → ⚙_, or with `gsettings`/`dconf` under
-`org.melser.hardbreak`.
+`org.gnome.shell.extensions.hardbreak`.
+
+Version 1.0.0 used the schema id `org.melser.hardbreak`; settings made under it are not
+migrated, so an upgrade from 1.0.0 starts again from the defaults below.
 
 | key               | unit                                                | default             |
 | ----------------- | --------------------------------------------------- | ------------------- |
@@ -230,7 +233,7 @@ bun run devkit                         # nested gnome-shell, isolated from the l
 The devkit runs the nested Shell under `dbus-run-session` _and_ under its own dconf
 database (`~/.config/dconf/hardbreak_devkit`, selected with `DCONF_PROFILE`), so:
 
-- **the live session is untouched** — `enabled-extensions` and every `org.melser.hardbreak`
+- **the live session is untouched** — `enabled-extensions` and every `org.gnome.shell.extensions.hardbreak`
   key written in the devkit stay in the isolated database;
 - **hardbreak is already enabled** there, with user extensions on and nothing else loaded;
 - **the first run seeds a fast schedule** (`mini-interval 1`, `mini-duration 20`,
@@ -246,7 +249,7 @@ nested Shell's bus address and talks to _it_ rather than to the live Shell:
 bun run devkit:ctl disable                 # disable() mid-break — the watchdog test
 bun run devkit:ctl enable                  # and back on
 bun run devkit:ctl info                    # gnome-extensions info
-bun run devkit:ctl set mini-interval 1     # org.melser.hardbreak keys, in the devkit db
+bun run devkit:ctl set mini-interval 1     # org.gnome.shell.extensions.hardbreak keys, in the devkit db
 bun run devkit:ctl get mini-interval
 bun run devkit:ctl fast                    # re-apply the fast schedule
 bun run devkit:ctl defaults                # reset every hardbreak key

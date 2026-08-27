@@ -147,6 +147,11 @@ keybinding block are identical in both modes.
 - GSettings schema `org.melser.hardbreak` (`schemas/org.melser.hardbreak.gschema.xml`,
   compiled with `glib-compile-schemas` into `dist/schemas/` on build for the local
   install).
+- **Addendum 2026-08-27:** the schema id, path and filename became
+  `org.gnome.shell.extensions.hardbreak` / `/org/gnome/shell/extensions/hardbreak/` /
+  `schemas/org.gnome.shell.extensions.hardbreak.gschema.xml` — extensions.gnome.org
+  requires that base (EGO-P-001, EGO-P-002). The pre-1.0.1 names above (and in §8's
+  layout) stand as the record of what was agreed; nothing is migrated.
 - `prefs.ts` → libadwaita preferences page: spin rows for the intervals/durations,
   colour + opacity, file chooser for `end-sound`, switches where relevant. The
   Extensions app's ⚙ button must work.

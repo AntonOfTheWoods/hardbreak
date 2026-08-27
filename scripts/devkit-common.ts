@@ -12,7 +12,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 export const UUID = 'hardbreak@melser.org';
-export const SCHEMA = 'org.melser.hardbreak';
+export const SCHEMA = 'org.gnome.shell.extensions.hardbreak';
 
 /**
  * Name of the isolated dconf database. **No hyphens**: dconf derives a D-Bus
