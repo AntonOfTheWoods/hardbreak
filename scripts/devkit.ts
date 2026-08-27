@@ -13,6 +13,7 @@
  * under `dbus-run-session` before the Shell starts.
  */
 
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fail, firstRun, root, writeProfile } from './devkit-common.js';
 import { dist, installDist, target } from './install-common.js';
@@ -30,6 +31,24 @@ console.log(
 const profile = writeProfile();
 const inner = join(root, 'scripts', 'devkit-inner.ts');
 
+// The devkit window is a client of the *live* compositor. A shell whose
+// environment predates the current login (a tmux server, say) has no
+// WAYLAND_DISPLAY, and the nested Shell then falls back to X11 with a stale
+// XAUTHORITY, fails, and runs headless on a virtual monitor nobody can see.
+const runtimeDir = process.env['XDG_RUNTIME_DIR'] ?? `/run/user/${process.getuid?.() ?? ''}`;
+const waylandEnv: Record<string, string> = {};
+if (!process.env['WAYLAND_DISPLAY']) {
+  const socket = 'wayland-0';
+  if (existsSync(join(runtimeDir, socket))) {
+    waylandEnv['WAYLAND_DISPLAY'] = socket;
+    console.log(`devkit: WAYLAND_DISPLAY was unset; using ${socket} from ${runtimeDir}`);
+  } else {
+    fail(
+      `devkit: WAYLAND_DISPLAY is unset and ${join(runtimeDir, socket)} does not exist — run this from a terminal inside the graphical session.`,
+    );
+  }
+}
+
 const session = Bun.spawnSync(
   [
     'dbus-run-session',
@@ -41,7 +60,7 @@ const session = Bun.spawnSync(
   ],
   {
     cwd: root,
-    env: { ...process.env, DCONF_PROFILE: profile },
+    env: { ...process.env, ...waylandEnv, DCONF_PROFILE: profile },
     stdin: 'inherit',
     stdout: 'inherit',
     stderr: 'inherit',
