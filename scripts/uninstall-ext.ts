@@ -1,20 +1,41 @@
 #!/usr/bin/env bun
-/** Remove the `dist/` symlink from the user's extensions directory. */
+/** Remove the installed extension — a copied directory, or an old-style symlink. */
 
-import { lstatSync, unlinkSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { lstatSync, readFileSync, rmSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
-
-const UUID = 'hardbreak@melser.org';
-const target = join(homedir(), '.local', 'share', 'gnome-shell', 'extensions', UUID);
+import { target, UUID } from './install-common.js';
 
 const stat = lstatSync(target, { throwIfNoEntry: false });
+
 if (stat === undefined) {
   console.log(`nothing to do: ${target} does not exist`);
-} else if (!stat.isSymbolicLink()) {
-  console.error(`uninstall refused: ${target} is not a symlink — remove it by hand.`);
-  process.exit(1);
-} else {
+} else if (stat.isSymbolicLink()) {
   unlinkSync(target);
+  console.log(`removed symlink: ${target}`);
+} else if (stat.isDirectory()) {
+  // Only delete a tree that says it is ours.
+  let uuid: string | undefined;
+  try {
+    const parsed = JSON.parse(readFileSync(join(target, 'metadata.json'), 'utf8')) as {
+      uuid?: unknown;
+    };
+    if (typeof parsed.uuid === 'string') uuid = parsed.uuid;
+  } catch {
+    uuid = undefined;
+  }
+  if (uuid !== UUID) {
+    console.error(
+      `uninstall refused: ${target} is a directory whose metadata.json ` +
+        `${uuid === undefined ? 'is missing or unreadable' : `has uuid ${uuid}`} — ` +
+        'it is not a hardbreak install. Remove it by hand.',
+    );
+    process.exit(1);
+  }
+  rmSync(target, { recursive: true, force: true });
   console.log(`removed: ${target}`);
+} else {
+  console.error(
+    `uninstall refused: ${target} is neither a directory nor a symlink — remove it by hand.`,
+  );
+  process.exit(1);
 }

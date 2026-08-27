@@ -168,7 +168,7 @@ keybinding block are identical in both modes.
   scheduler must stay GJS-free so bun can unit-test it.
 - **bun** only; scripts in the standard check-default shape: `format` / `lint` (check),
   `format:write` / `lint:fix`, `typecheck`, `check`, `validate`, `build`, and
-  `install` = symlink `dist/` → `~/.local/share/gnome-shell/extensions/hardbreak@melser.org`
+  `install` = symlink `dist/` → `~/.local/share/gnome-shell/extensions/hardbreak@melser.org` (⚠ amended 2026-08-27: `install:ext` *copies* `dist/` — a symlink let every rebuild mutate the live extension)
   (plus `uninstall`). **oxlint / oxfmt**, no eslint/prettier/biome.
 - Git: `main` + `develop`, rebase-only, linear history. ⚠ MIT licence (as conform-ed),
   with the Stretchly BSD-2-Clause attribution for the wav and idea lists.

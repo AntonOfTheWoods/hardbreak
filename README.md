@@ -185,12 +185,13 @@ gnome-extensions enable hardbreak@melser.org
 ```sh
 bun install            # also installs the pre-commit hook
 bun run build          # tsc -> dist/, plus assets, schema and glib-compile-schemas
-bun run install:ext    # symlink dist/ into ~/.local/share/gnome-shell/extensions/
+bun run install:ext    # copy dist/ into ~/.local/share/gnome-shell/extensions/
 ```
 
-Log out and back in, then `gnome-extensions enable hardbreak@melser.org`. After that,
-`bun run build` alone is enough — the symlink means the Shell reloads the new code the next
-time the extension is toggled. `bun run uninstall:ext` removes the symlink.
+Log out and back in, then `gnome-extensions enable hardbreak@melser.org`. The install is a
+**copy**, so rebuilding changes nothing that is installed: run `bun run install:ext` again
+(and log out and back in) to move the running session onto new code. `bun run uninstall:ext`
+removes the installed directory.
 
 The first time it is enabled, hardbreak posts a notification saying what it is about to do
 and — in strict mode — how to get out of it. That is the `first-run-done` setting above.
@@ -217,8 +218,10 @@ bun run devkit:ctl     # drive the running devkit (enable/disable/get/set/...)
 bun run logs           # journalctl -f -o cat /usr/bin/gnome-shell (the LIVE session)
 ```
 
-`bun run pack` rebuilds and then checks the zip it produced: every runtime file must be in
-it, and nothing test-only may be. CI runs `validate` + `pack` on every push and pull
+`bun run pack` rebuilds, stamps `version-name` into `dist/metadata.json` from the git tag
+(`git describe`, leading `v` stripped — the checked-in `metadata.json` keeps `version: 1`,
+which extensions.gnome.org assigns itself), and then checks the zip it produced: every
+runtime file must be in it, and nothing test-only may be. CI runs `validate` + `pack` on every push and pull
 request and uploads the zip; a `v*` tag additionally publishes a GitHub release with the
 zip attached and the tag message as the notes (`.github/workflows/`).
 
@@ -226,9 +229,14 @@ zip attached and the tag message as the notes (`.github/workflows/`).
 bug locks a window rather than the desktop.
 
 ```sh
-bun run build && bun run install:ext   # once: dist/ -> ~/.local/share/gnome-shell/extensions/
+bun run build                          # dist/
 bun run devkit                         # nested gnome-shell, isolated from the live session
 ```
+
+`bun run devkit` installs `dist/` itself (the same copy `install:ext` does) so the nested
+Shell always runs the tree you just built. That writes to the same directory as your live
+install, which is safe — the running Shell keeps the code it loaded at enable() time — but it
+does mean the next login picks up whatever the devkit last installed.
 
 The devkit runs the nested Shell under `dbus-run-session` _and_ under its own dconf
 database (`~/.config/dconf/hardbreak_devkit`, selected with `DCONF_PROFILE`), so:

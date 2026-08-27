@@ -3,8 +3,8 @@
  * Build `tmp/pack/hardbreak@melser.org.shell-extension.zip`: the artefact that
  * is uploaded to extensions.gnome.org and attached to a GitHub release.
  *
- * The bundle is `dist/` — the same tree `install:ext` symlinks — so a release
- * contains exactly what has been running locally.
+ * The bundle is `dist/` — the same tree `install:ext` copies into the extensions
+ * directory — so a release contains exactly what has been running locally.
  *
  * Two backends produce it:
  *
@@ -21,7 +21,7 @@
  * that must not — a missing schema or a shipped test file fails the build.
  */
 
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const UUID = 'hardbreak@melser.org';
@@ -92,12 +92,47 @@ function capture(cmd: string[]): string {
 // 1. A pack is always a fresh build: never ship a stale dist/.
 run([process.execPath, 'run', join(root, 'scripts', 'build.ts')]);
 
-// 2. metadata.json is what e.g.o reads first; a mismatch there wastes a review.
+// 2. Stamp the human-readable version into the *built* metadata.json.
+//    `version` is an integer that e.g.o assigns and overwrites, so it stays 1 in
+//    the source file; `version-name` (GNOME 45+, <=16 chars of [A-Za-z0-9.-]) is
+//    the string users see. Git tags are the only source of truth for it, so it
+//    is derived here and never hand-edited.
 const metadataPath = join(dist, 'metadata.json');
 if (!existsSync(metadataPath)) fail('dist/metadata.json is missing — did the build run?');
+
+function git(args: string[]): string | undefined {
+  const result = Bun.spawnSync(['git', ...args], { cwd: root, stdout: 'pipe', stderr: 'pipe' });
+  if (result.exitCode !== 0) return undefined;
+  const out = result.stdout.toString().trim();
+  return out.length > 0 ? out : undefined;
+}
+
+/** `v1.0.1` -> `1.0.1`; an untagged commit -> `1.0.0-1-g5f69238`. */
+function versionName(): string | undefined {
+  const described =
+    git(['describe', '--tags', '--exact-match', 'HEAD']) ?? git(['describe', '--tags', '--always']);
+  if (described === undefined) return undefined;
+  return described
+    .replace(/^v/, '')
+    .replace(/[^A-Za-z0-9.-]/g, '-')
+    .slice(0, 16);
+}
+
+const stamped = versionName();
+if (stamped === undefined) {
+  console.log('pack: no git description available — packing without version-name');
+} else {
+  const source = JSON.parse(readFileSync(metadataPath, 'utf8')) as Record<string, unknown>;
+  source['version-name'] = stamped;
+  writeFileSync(metadataPath, `${JSON.stringify(source, undefined, 2)}\n`);
+  console.log(`pack: version-name ${stamped}`);
+}
+
+// 3. metadata.json is what e.g.o reads first; a mismatch there wastes a review.
 const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as {
   uuid?: string;
   version?: number;
+  'version-name'?: string;
   'shell-version'?: string[];
 };
 if (metadata.uuid !== UUID)
@@ -106,12 +141,16 @@ if (!Array.isArray(metadata['shell-version']) || metadata['shell-version'].lengt
   fail('metadata.json has no shell-version');
 }
 if (typeof metadata.version !== 'number') fail('metadata.json has no numeric version');
+const label = metadata['version-name'];
+if (label !== undefined && !/^[A-Za-z0-9.-]{1,16}$/.test(label)) {
+  fail(`metadata.json version-name ${JSON.stringify(label)} is not <=16 chars of [A-Za-z0-9.-]`);
+}
 
 for (const name of EXTRA_SOURCES) {
   if (!existsSync(join(dist, name))) fail(`dist/${name} is missing — did the build run?`);
 }
 
-// 3. Pack.
+// 4. Pack.
 mkdirSync(outDir, { recursive: true });
 rmSync(zipPath, { force: true });
 
@@ -151,7 +190,7 @@ if (gnomeExtensions) {
 
 if (!existsSync(zipPath)) fail(`${zipPath} was not created`);
 
-// 4. Verify. This is the actual contract; the backend above is an implementation
+// 5. Verify. This is the actual contract; the backend above is an implementation
 //    detail.
 if (!Bun.which('unzip')) fail('unzip is needed to verify the bundle');
 const entries = capture(['unzip', '-Z1', zipPath])
@@ -173,6 +212,6 @@ if (missing.length > 0 || forbidden.length > 0) {
   fail(`${missing.length} missing file(s), ${forbidden.length} forbidden file(s)`);
 }
 
-// 5. Report.
+// 6. Report.
 process.stdout.write(capture(['unzip', '-l', zipPath]));
 console.log(`packed ${zipPath}`);

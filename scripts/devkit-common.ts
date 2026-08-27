@@ -26,7 +26,6 @@ export const dist = join(root, 'dist');
 export const schemaDir = join(dist, 'schemas');
 export const profilePath = join(root, 'tmp', 'devkit', 'dconf-profile');
 export const dconfDbPath = join(homedir(), '.config', 'dconf', DCONF_DB);
-export const extensionLink = join(homedir(), '.local', 'share', 'gnome-shell', 'extensions', UUID);
 
 /** A short schedule that makes a full mini/long cycle testable in minutes. */
 export const FAST_SCHEDULE: ReadonlyArray<readonly [key: string, value: string]> = [

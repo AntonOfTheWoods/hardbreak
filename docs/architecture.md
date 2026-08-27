@@ -29,7 +29,8 @@ src/
 schemas/org.gnome.shell.extensions.hardbreak.gschema.xml
 assets/ideas.json  assets/crystal-glass.wav
 metadata.json  stylesheet.css
-scripts/build.ts  scripts/pack.ts  scripts/install-ext.ts  scripts/uninstall-ext.ts  scripts/install-hooks.ts
+scripts/build.ts  scripts/pack.ts  scripts/install-common.ts  scripts/install-ext.ts  scripts/uninstall-ext.ts
+scripts/install-hooks.ts
 ```
 
 `tsc` emits `src/**` → `dist/**` (same tree) minus `core/types.js`, which `scripts/build.ts`
@@ -37,7 +38,10 @@ deletes: `types.ts` exports types only, so the emitted module is empty and unrea
 `extension.js`/`prefs.js`, which e.g.o rejects (EGO-P-007). The delete is guarded — the build
 fails if that file ever gains a runtime statement or an importer. `scripts/build.ts` then copies
 `metadata.json`, `stylesheet.css`, `assets/`, `schemas/*.xml` into `dist/` and runs
-`glib-compile-schemas dist/schemas`. `dist/` is symlinked to `~/.local/share/gnome-shell/extensions/hardbreak@melser.org`.
+`glib-compile-schemas dist/schemas`. `scripts/install-ext.ts` **copies** `dist/` to
+`~/.local/share/gnome-shell/extensions/hardbreak@melser.org` (staged in a hidden sibling directory,
+then renamed into place), so a rebuild never mutates the tree a running Shell, prefs process or
+Extensions app is reading.
 Relative imports are written with `.js` extensions (`./core/scheduler.js`) so the emitted ESM
 loads unmodified in GJS.
 
@@ -308,9 +312,9 @@ The 30 s margin is a constant (`WATCHDOG_MARGIN_MS`), not a setting (spec §2).
 | `check` | typecheck + lint + test |
 | `validate` | format + check (pre-commit hook, installed by `prepare`) |
 | `build` | `bun run scripts/build.ts` — tsc, drop the unreachable `core/types.js`, copy assets/schema, `glib-compile-schemas` |
-| `pack` | `bun run scripts/pack.ts` — build, then `gnome-extensions pack` (or a plain `zip` where that tool is absent) into `tmp/pack/`, then verify the bundle against an explicit required/forbidden file list (`core/types.js` is on the forbidden side) |
-| `install:ext` / `uninstall:ext` | symlink / unlink `dist/` ↔ `~/.local/share/gnome-shell/extensions/hardbreak@melser.org` |
-| `devkit` | `dbus-run-session -- gnome-shell --devkit` |
+| `pack` | `bun run scripts/pack.ts` — build, stamp `version-name` into `dist/metadata.json` from `git describe` (exact tag → `1.0.1`, otherwise `1.0.0-3-g5f69238`; leading `v` stripped, sanitised to `[A-Za-z0-9.-]`, ≤16 chars — the source `metadata.json` keeps `version: 1`, which e.g.o overwrites), then `gnome-extensions pack` (or a plain `zip` where that tool is absent) into `tmp/pack/`, then verify the bundle against an explicit required/forbidden file list (`core/types.js` is on the forbidden side) |
+| `install:ext` / `uninstall:ext` | copy `dist/` into / remove `~/.local/share/gnome-shell/extensions/hardbreak@melser.org` (`scripts/install-common.ts`: stage as a hidden sibling, `rename(2)` into place; an old-style symlink is unlinked, a directory is replaced only if its `metadata.json` carries our uuid) |
+| `devkit` | `dbus-run-session -- gnome-shell --devkit`, after installing `dist/` (the preflight *is* `install:ext`, so the nested Shell runs the current build) |
 | `logs` | `journalctl -f -o cat /usr/bin/gnome-shell` |
 
 (`install`/`uninstall` from spec §8 are named `install:ext`/`uninstall:ext` because bun treats a

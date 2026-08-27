@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Build `dist/`: the directory that gets symlinked into
+ * Build `dist/`: the tree `scripts/install-ext.ts` copies into
  * `~/.local/share/gnome-shell/extensions/hardbreak@melser.org`.
  *
  * There is deliberately no bundling — gnome-shell's GJS loads the emitted ESM
@@ -23,8 +23,8 @@ function run(cmd: string[]): void {
   if (result.exitCode !== 0) fail(`${cmd.join(' ')} exited with ${result.exitCode}`);
 }
 
-// 1. Clean. The install symlink points at this path, not at its inode, so
-//    removing and recreating the directory does not break it.
+// 1. Clean. `dist/` is scratch: the install is a copy, so wiping and rebuilding
+//    it leaves the installed extension alone until `install:ext` runs again.
 rmSync(dist, { recursive: true, force: true });
 mkdirSync(dist, { recursive: true });
 

@@ -13,28 +13,19 @@
  * under `dbus-run-session` before the Shell starts.
  */
 
-import { existsSync, lstatSync, readlinkSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-import { dist, extensionLink, fail, firstRun, root, writeProfile } from './devkit-common.js';
+import { join } from 'node:path';
+import { fail, firstRun, root, writeProfile } from './devkit-common.js';
+import { dist, installDist, target } from './install-common.js';
 
-const link = lstatSync(extensionLink, { throwIfNoEntry: false });
-if (link === undefined || !link.isSymbolicLink()) {
-  fail(
-    `devkit refused: ${extensionLink} is not a symlink to ${dist}.\n` +
-      'Run `bun run install:ext` first.',
-  );
-}
-const linkTarget = resolve(dirname(extensionLink), readlinkSync(extensionLink));
-if (linkTarget !== dist) {
-  fail(
-    `devkit refused: ${extensionLink} points at ${linkTarget}, not at ${dist}.\n` +
-      'Run `bun run install:ext` first.',
-  );
-}
-
-if (!existsSync(join(dist, 'metadata.json'))) {
-  fail(`devkit refused: ${join(dist, 'metadata.json')} is missing.\nRun \`bun run build\` first.`);
-}
+// The devkit must run the tree that is on disk *now*, so the preflight is the
+// install itself. That writes to the same directory as the live install — which
+// is safe: the running Shell holds the code it loaded at enable() time, and the
+// swap is a rename, never a half-written tree.
+const outcome = installDist();
+if (!outcome.ok) fail(`devkit refused: ${outcome.error}`);
+console.log(
+  `devkit: installed ${dist} to ${target} (the live session keeps running the code it loaded; log out/in to switch)`,
+);
 
 const profile = writeProfile();
 const inner = join(root, 'scripts', 'devkit-inner.ts');
