@@ -17,7 +17,9 @@
     "build": "bun run scripts/build.ts",
     "install:ext": "bun run scripts/install-ext.ts",
     "uninstall:ext": "bun run scripts/uninstall-ext.ts",
-    "devkit": "dbus-run-session -- gnome-shell --devkit",
+    "devkit": "bun run scripts/devkit.ts",
+    "devkit:ctl": "bun run scripts/devkit-ctl.ts",
+    "devkit:reset": "bun run scripts/devkit-reset.ts",
     "logs": "journalctl -f -o cat /usr/bin/gnome-shell",
     "prepare": "bun run scripts/install-hooks.ts"
   },

@@ -32,8 +32,9 @@ the symlink means the Shell reloads the new code the next time the extension is 
 ```sh
 bun run validate       # format + typecheck + lint + test (this is the pre-commit hook)
 bun run test           # bun test — the scheduler and watchdog are GJS-free and unit-tested
-bun run devkit         # dbus-run-session -- gnome-shell --devkit
-bun run logs           # journalctl -f -o cat /usr/bin/gnome-shell
+bun run devkit         # nested gnome-shell, isolated bus + isolated dconf db
+bun run devkit:ctl     # drive the running devkit (enable/disable/get/set/...)
+bun run logs           # journalctl -f -o cat /usr/bin/gnome-shell (the LIVE session)
 ```
 
 **Never exercise the overlay on the live session first** — use `bun run devkit`, where a
@@ -42,46 +43,60 @@ bug locks a window rather than the desktop.
 ## Testing in the devkit
 
 ```sh
-bun run build && bun run install:ext   # dist/ -> ~/.local/share/gnome-shell/extensions/
-bun run devkit                         # dbus-run-session -- gnome-shell --devkit
+bun run build && bun run install:ext   # once: dist/ -> ~/.local/share/gnome-shell/extensions/
+bun run devkit                         # nested gnome-shell, isolated from the live session
 ```
 
-The devkit is a second gnome-shell in a window. Inside it, open a terminal (Activities →
-Terminal, or any launcher the nested session has) and enable the extension there:
+`bun run devkit` runs the nested Shell under `dbus-run-session` _and_ under its own dconf
+database (`~/.config/dconf/hardbreak_devkit`, selected with `DCONF_PROFILE`), so:
+
+- **the live session is untouched** — `enabled-extensions` and every `org.melser.hardbreak`
+  key written in the devkit stay in the isolated database;
+- **hardbreak is already enabled** there, with user extensions on and nothing else loaded;
+- **the first run seeds a fast schedule** (`mini-interval 1`, `mini-duration 20`,
+  `long-duration 30`, `mini-warning 5`, `long-warning 10`, both postpones 1) so a whole
+  cycle is testable in minutes. Later runs leave your settings alone;
+- **nothing re-indexes your home directory** — Tracker's file miner is disabled in that
+  database, so the fresh bus does not activate it.
+
+Drive the running devkit from your normal terminal with `devkit:ctl`, which finds the
+nested Shell's bus address and talks to _it_ rather than to the live Shell:
 
 ```sh
-gnome-extensions enable hardbreak@melser.org
+bun run devkit:ctl disable                 # disable() mid-break — the watchdog test
+bun run devkit:ctl enable                  # and back on
+bun run devkit:ctl info                    # gnome-extensions info
+bun run devkit:ctl set mini-interval 1     # org.melser.hardbreak keys, in the devkit db
+bun run devkit:ctl get mini-interval
+bun run devkit:ctl fast                    # re-apply the fast schedule
+bun run devkit:ctl defaults                # reset every hardbreak key
+bun run devkit:reset                       # delete the devkit db (next launch = first run)
 ```
 
-Two things to know before doing that:
+`bun run devkit:ctl disable` while a wall is up is the standard mid-break teardown test.
+`devkit:reset` refuses while a devkit is running, and only ever removes
+`~/.config/dconf/hardbreak_devkit`.
 
-- **dconf is shared with the live session.** The nested Shell writes
-  `org.gnome.shell enabled-extensions` to the same dconf database as the desktop you are
-  sitting in, so enabling hardbreak in the devkit also enables it on the live session at
-  the next login — with a real, undismissable overlay. Do the Stretchly cut-over
-  (spec §11, below) _before_ the first devkit run, or be ready for the wall to appear on
-  the desktop after the next login. `gnome-extensions disable hardbreak@melser.org` from
-  the nested session undoes it just as globally. The same goes for every
-  `org.melser.hardbreak` key: prefs changes made in the devkit are the live settings.
+Two more things worth knowing:
+
 - **Logs are split.** The devkit prints its own `console.*` / `logError` output to the
-  stdout of the terminal that ran `bun run devkit`; `bun run logs` follows the _live_
-  session's gnome-shell instead. Watch the terminal you launched the devkit from.
+  stdout of the terminal that ran `bun run devkit`. `bun run logs` follows the _live_
+  session's gnome-shell instead.
+- The live Shell only sees a newly installed extension after a logout/login — it scans the
+  extensions directory at startup. That is why `gnome-extensions enable hardbreak@melser.org`
+  typed in an ordinary terminal reports that the extension "doesn't exist"; use
+  `bun run devkit:ctl enable` for the devkit.
 
-Worth a shortened schedule while testing, e.g. `mini-interval 1`, `mini-duration 10`,
-`long-duration 15`, `mini-warning 5` — and remember to put them back.
+## Going live
 
-## Cutting over from Stretchly
+Once the devkit checks pass (watchdog release, exception release, disable mid-break,
+Super/Alt+Tab blocked, postpone window):
 
-1. The day hardbreak is enabled on the live session, stop Stretchly so the two enforcers
-   never overlap:
-   ```sh
-   rm ~/.config/autostart/stretchly.desktop && pkill -f /opt/Stretchly/stretchly
-   ```
-   Leave the deb installed as a rollback.
-2. After a trial fortnight with no session lock-ups:
-   ```sh
-   sudo apt purge stretchly && rm -rf ~/.config/Stretchly
-   ```
+1. Log out and back in — the live Shell only scans the extensions directory at startup.
+2. Enable hardbreak in the Extensions app (or `gnome-extensions enable hardbreak@melser.org`).
+
+Stretchly and its apt repository were removed on 2026-08-27, so there is no overlap to
+manage and no rollback to keep.
 
 ## Documentation
 
