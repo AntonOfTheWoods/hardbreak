@@ -1,0 +1,17 @@
+{
+  "printWidth": 100,
+  // GNOME Shell JavaScript is single-quoted throughout; match it.
+  "singleQuote": true,
+  "ignorePatterns": [
+    "dist/**",
+    "node_modules/**",
+    "tmp/**",
+    // Bundled data from Stretchly; kept exactly as generated.
+    "assets/**",
+    // The handed-over spec and architecture notes stay byte-identical.
+    "docs/**",
+    // Editor scaffolding, not project source.
+    "*.code-workspace",
+    "bun.lock",
+  ],
+}

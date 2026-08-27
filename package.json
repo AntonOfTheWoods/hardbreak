@@ -1,0 +1,35 @@
+{
+  "name": "hardbreak",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Enforced screen breaks for GNOME Shell: an undismissable full-screen overlay on every monitor.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "format": "oxfmt --check .",
+    "format:write": "oxfmt .",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.build.json",
+    "test": "bun test",
+    "check": "bun run typecheck && bun run lint && bun run test",
+    "validate": "bun run format && bun run check",
+    "build": "bun run scripts/build.ts",
+    "install:ext": "bun run scripts/install-ext.ts",
+    "uninstall:ext": "bun run scripts/uninstall-ext.ts",
+    "devkit": "dbus-run-session -- gnome-shell --devkit",
+    "logs": "journalctl -f -o cat /usr/bin/gnome-shell",
+    "prepare": "bun run scripts/install-hooks.ts"
+  },
+  "devDependencies": {
+    "@girs/adw-1": "4.1.0",
+    "@girs/gjs": "4.1.0",
+    "@girs/gnome-shell": "50.0.4",
+    "@girs/gtk-4.0": "4.1.0",
+    "@types/bun": "1.4.0",
+    "oxfmt": "0.65.0",
+    "oxlint": "1.80.0",
+    "typescript": "7.0.2"
+  },
+  "packageManager": "bun@1.4.0"
+}

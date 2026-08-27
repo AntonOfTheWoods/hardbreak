@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.melser.hardbreak" path="/org/melser/hardbreak/">
+
+    <key name="mini-interval" type="i">
+      <default>30</default>
+      <range min="1" max="240"/>
+      <summary>Interval between breaks (minutes)</summary>
+      <description>Minutes of work between one break and the next.</description>
+    </key>
+
+    <key name="mini-duration" type="i">
+      <default>60</default>
+      <range min="5" max="3600"/>
+      <summary>Mini break duration (seconds)</summary>
+      <description>How long a mini break lasts, in seconds.</description>
+    </key>
+
+    <key name="long-duration" type="i">
+      <default>180</default>
+      <range min="5" max="3600"/>
+      <summary>Long break duration (seconds)</summary>
+      <description>How long a long break lasts, in seconds.</description>
+    </key>
+
+    <key name="minis-per-long" type="i">
+      <default>1</default>
+      <range min="0" max="20"/>
+      <summary>Mini breaks between long breaks (count)</summary>
+      <description>Number of mini breaks between two long breaks. 0 means every break is long; 1 alternates mini and long.</description>
+    </key>
+
+    <key name="mini-warning" type="i">
+      <default>10</default>
+      <range min="0" max="300"/>
+      <summary>Warning before a mini break (seconds)</summary>
+      <description>Seconds of notice before a mini break starts. 0 disables the warning.</description>
+    </key>
+
+    <key name="long-warning" type="i">
+      <default>30</default>
+      <range min="0" max="300"/>
+      <summary>Warning before a long break (seconds)</summary>
+      <description>Seconds of notice before a long break starts. 0 disables the warning.</description>
+    </key>
+
+    <key name="mini-postpone" type="i">
+      <default>2</default>
+      <range min="0" max="60"/>
+      <summary>Mini break postponement (minutes)</summary>
+      <description>Minutes a mini break is pushed back when postponed. 0 disables postponing mini breaks.</description>
+    </key>
+
+    <key name="long-postpone" type="i">
+      <default>5</default>
+      <range min="0" max="60"/>
+      <summary>Long break postponement (minutes)</summary>
+      <description>Minutes a long break is pushed back when postponed. 0 disables postponing long breaks.</description>
+    </key>
+
+    <key name="postpone-window" type="i">
+      <default>30</default>
+      <range min="0" max="100"/>
+      <summary>Postpone window (percent of the break)</summary>
+      <description>Percentage of the break during which the postpone button is offered.</description>
+    </key>
+
+    <key name="idle-reset" type="i">
+      <default>5</default>
+      <range min="1" max="120"/>
+      <summary>Natural break threshold (minutes)</summary>
+      <description>Minutes away from the machine (idle, locked or suspended) that count as a break and restart the cycle.</description>
+    </key>
+
+    <key name="morning-hour" type="i">
+      <default>6</default>
+      <range min="0" max="23"/>
+      <summary>Morning hour for &quot;pause until tomorrow&quot; (hour, local time)</summary>
+      <description>Local-time hour at which a &quot;pause until tomorrow&quot; ends.</description>
+    </key>
+
+    <key name="overlay-color" type="s">
+      <default>'#633738'</default>
+      <summary>Overlay colour (CSS hex)</summary>
+      <description>Background colour of the break overlay, as a CSS hex string.</description>
+    </key>
+
+    <key name="overlay-opacity" type="d">
+      <default>0.9</default>
+      <range min="0.0" max="1.0"/>
+      <summary>Overlay opacity (fraction, 0 to 1)</summary>
+      <description>Opacity of the break overlay background.</description>
+    </key>
+
+    <key name="end-sound" type="s">
+      <default>'crystal-glass.wav'</default>
+      <summary>Sound played at the end of a break (file path)</summary>
+      <description>A relative name is resolved against the extension's assets directory; an absolute path is used verbatim; an empty string means silence.</description>
+    </key>
+
+    <key name="breaks-enabled" type="b">
+      <default>true</default>
+      <summary>Breaks enabled (on/off)</summary>
+      <description>When off, no breaks are scheduled. Toggled from the panel menu and persisted across Shell restarts.</description>
+    </key>
+
+  </schema>
+</schemalist>

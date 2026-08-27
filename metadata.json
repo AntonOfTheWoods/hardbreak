@@ -1,0 +1,9 @@
+{
+  "uuid": "hardbreak@melser.org",
+  "name": "hardbreak",
+  "description": "Enforced screen breaks: an undismissable full-screen overlay on every monitor. Zero-process replacement for Stretchly.",
+  "shell-version": ["50"],
+  "settings-schema": "org.melser.hardbreak",
+  "url": "https://github.com/AntonOfTheWoods/hardbreak",
+  "version": 1
+}

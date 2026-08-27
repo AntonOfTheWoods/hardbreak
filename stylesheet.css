@@ -1,0 +1,51 @@
+/* hardbreak — break overlay styling. Loaded by gnome-shell from the extension dir. */
+
+/* One of these covers each monitor. The background colour is set inline from the
+   overlay-color / overlay-opacity settings; only layout lives here. */
+.hardbreak-overlay {
+  width: 100%;
+  height: 100%;
+}
+
+/* Centred vertical box inside a monitor cover. */
+.hardbreak-content {
+  spacing: 24px;
+  padding: 48px;
+}
+
+.hardbreak-countdown {
+  font-size: 96px;
+  font-weight: bold;
+  color: #ffffff;
+}
+
+.hardbreak-idea-title {
+  font-size: 28px;
+  font-weight: bold;
+  color: #ffffff;
+}
+
+.hardbreak-idea-body {
+  font-size: 20px;
+  color: #ffffff;
+  max-width: 800px;
+  text-align: center;
+}
+
+.hardbreak-postpone {
+  font-size: 18px;
+  color: #ffffff;
+  padding: 12px 28px;
+  border-radius: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.6);
+  background-color: rgba(255, 255, 255, 0.12);
+}
+
+.hardbreak-postpone:hover {
+  background-color: rgba(255, 255, 255, 0.24);
+}
+
+/* Panel icon while breaks are not counting down (disabled / paused / DND / away). */
+.hardbreak-paused {
+  opacity: 0.5;
+}
