@@ -39,6 +39,37 @@ bun run logs           # journalctl -f -o cat /usr/bin/gnome-shell
 **Never exercise the overlay on the live session first** — use `bun run devkit`, where a
 bug locks a window rather than the desktop.
 
+## Testing in the devkit
+
+```sh
+bun run build && bun run install:ext   # dist/ -> ~/.local/share/gnome-shell/extensions/
+bun run devkit                         # dbus-run-session -- gnome-shell --devkit
+```
+
+The devkit is a second gnome-shell in a window. Inside it, open a terminal (Activities →
+Terminal, or any launcher the nested session has) and enable the extension there:
+
+```sh
+gnome-extensions enable hardbreak@melser.org
+```
+
+Two things to know before doing that:
+
+- **dconf is shared with the live session.** The nested Shell writes
+  `org.gnome.shell enabled-extensions` to the same dconf database as the desktop you are
+  sitting in, so enabling hardbreak in the devkit also enables it on the live session at
+  the next login — with a real, undismissable overlay. Do the Stretchly cut-over
+  (spec §11, below) _before_ the first devkit run, or be ready for the wall to appear on
+  the desktop after the next login. `gnome-extensions disable hardbreak@melser.org` from
+  the nested session undoes it just as globally. The same goes for every
+  `org.melser.hardbreak` key: prefs changes made in the devkit are the live settings.
+- **Logs are split.** The devkit prints its own `console.*` / `logError` output to the
+  stdout of the terminal that ran `bun run devkit`; `bun run logs` follows the _live_
+  session's gnome-shell instead. Watch the terminal you launched the devkit from.
+
+Worth a shortened schedule while testing, e.g. `mini-interval 1`, `mini-duration 10`,
+`long-duration 15`, `mini-warning 5` — and remember to put them back.
+
 ## Cutting over from Stretchly
 
 1. The day hardbreak is enabled on the live session, stop Stretchly so the two enforcers

@@ -118,17 +118,31 @@ export class Scheduler {
     this.emitState();
   }
 
-  /** Idle, locked or suspended. A running break is left alone. */
-  wentAway(): void {
-    if (this.away) return;
+  /**
+   * Idle, locked or suspended.
+   *
+   * Idle leaves a running break alone — being idle is precisely what the wall
+   * makes you. Lock and suspend pass `{ interruptBreak: true }`: the wall must
+   * never be left standing behind the unlock dialog, and a closed lid must not
+   * turn into a skipped break either, so the interrupted break is remembered as
+   * owed (see {@link interruptBreak}) and {@link cameBack} decides its fate.
+   */
+  wentAway(options?: { interruptBreak?: boolean }): void {
+    // Deliberately not conditional on the away transition: locking while the
+    // idle watch has already fired must still take the wall down.
+    const interrupt = options?.interruptBreak === true && this.phase === 'break';
+    if (this.away && !interrupt) return;
     this.away = true;
-    if (this.phase === 'countdown' || this.phase === 'warning') this.freezeCountdown();
+    if (interrupt) this.interruptBreak();
+    else if (this.phase === 'countdown' || this.phase === 'warning') this.freezeCountdown();
     this.emitState();
   }
 
   /**
    * Back at the machine after `awayMs` (wall time, measured by the adapter).
-   * An absence at least as long as `idle-reset` counts as a break in itself.
+   * An absence at least as long as `idle-reset` counts as a break in itself; a
+   * shorter one resumes the frozen countdown — which, after a break was
+   * interrupted, is what brings that same break straight back.
    */
   cameBack(awayMs: number): void {
     if (!this.away) return;
@@ -169,6 +183,9 @@ export class Scheduler {
       'pauseEnd',
       Math.max(0, ms),
       this.safe('pause-end timer', () => {
+        // Forget the handle first, exactly like the other three slots: GLib
+        // logs a critical if a source id is removed after it has already run.
+        this.timerHandles.delete('pauseEnd');
         this.pausedUntil = null;
         this.planOrIdle();
         this.emitState();
@@ -281,6 +298,27 @@ export class Scheduler {
     this.phase = 'off';
   }
 
+  /**
+   * Take the wall down without letting the counters move on: the same break is
+   * still owed. `remainingMs` becomes that break's warning, so a short absence
+   * resumes into the warning immediately and the wall follows it — an
+   * interruption postpones a break by its warning, it never skips one.
+   */
+  private interruptBreak(): void {
+    this.clearTimer('breakEnd');
+    try {
+      this.effects.endBreak('interrupted');
+    } catch (err) {
+      // Never leave the phase at `break` with no break-end timer: that would be
+      // a wall with nothing left to take it down.
+      this.log('hardbreak: endBreak(interrupted) threw', err);
+    }
+    // `minisSinceLong` and `postponedThisBreak` are untouched on purpose, so
+    // `nextKind()` still names the break that was cut short.
+    this.remainingMs = this.warningMsFor(this.breakKind);
+    this.phase = 'off';
+  }
+
   /** Short absence: pick the frozen countdown back up where it stopped. */
   private resumeCountdown(): void {
     if (this.blocked()) {
@@ -303,9 +341,11 @@ export class Scheduler {
     this.clearTimer('breakStart');
     const now = this.clock.now();
     const kind = this.nextKind();
-    const warningMs = kind === 'mini' ? this.settings.miniWarningMs : this.settings.longWarningMs;
+    const warningMs = this.warningMsFor(kind);
     const warnAt = this.nextBreakAt - warningMs;
-    if (warningMs > 0 && warnAt > now) {
+    // `>=`, not `>`: an interrupted break resumes with exactly its warning left,
+    // and that warning has to be given rather than dropped as "already past".
+    if (warningMs > 0 && warnAt >= now) {
       this.setTimer(
         'warning',
         warnAt - now,
@@ -394,6 +434,10 @@ export class Scheduler {
 
   private postponeMsFor(kind: BreakKind): number {
     return kind === 'mini' ? this.settings.miniPostponeMs : this.settings.longPostponeMs;
+  }
+
+  private warningMsFor(kind: BreakKind): number {
+    return kind === 'mini' ? this.settings.miniWarningMs : this.settings.longWarningMs;
   }
 
   private mode(): Mode {

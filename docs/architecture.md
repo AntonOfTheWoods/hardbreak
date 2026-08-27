@@ -125,8 +125,9 @@ first true of disabled / dnd / away / paused, else the phase.
   `nextBreakAt = now + miniIntervalMs`, phase `countdown`, timers re-armed. `nextKind` =
   `minisSinceLong >= minisPerLong ? 'long' : 'mini'` (so `minisPerLong = 1` alternates,
   `0` makes every break long).
-- **arming**: warning timer at `nextBreakAt - warningMs(kind)` if that is `> now` and
-  `warningMs > 0`; break-start timer at `nextBreakAt`.
+- **arming**: warning timer at `nextBreakAt - warningMs(kind)` if that is `>= now` and
+  `warningMs > 0`; break-start timer at `nextBreakAt`. (`>=`, not `>`: an interrupted
+  break resumes with exactly its warning left, and that warning must still be given.)
 - **warning timer** → phase `warning`, `effects.warn(kind, ceil((nextBreakAt-now)/1000))`.
 - **break-start timer** → phase `break`; `breakStartedAt = now`; `postponeAllowed =
   !postponedThisBreak && postponeMs(kind) > 0 && postponeWindow > 0`; `effects.startBreak(...)`;
@@ -141,8 +142,18 @@ first true of disabled / dnd / away / paused, else the phase.
 - **`abortBreak()`** (watchdog fired or overlay threw): if phase is `break`, cancel the
   break-end timer, `effects.endBreak('aborted')`, then advance exactly as `completed` (the
   user has had the wall for at least the full duration by the time the watchdog fires).
-- **`wentAway()`**: if countdown/warning → `remainingMs = nextBreakAt - now`, cancel timers,
-  phase `off`, `away = true`. If in a break → just `away = true` (the break continues).
+- **`wentAway(options?: { interruptBreak?: boolean })`**: if countdown/warning →
+  `remainingMs = nextBreakAt - now`, cancel timers, phase `off`, `away = true`. If in a
+  break → just `away = true` and the break continues, *unless* `interruptBreak` is set.
+  Idle never sets it (idle is exactly what the wall makes you); lock and suspend always do,
+  because the wall must never be left behind the unlock dialog and a closed lid must not
+  become a skipped break. With `interruptBreak` and phase `break`: cancel the break-end
+  timer, `effects.endBreak('interrupted')`, `remainingMs = warningMs(kind)` for the break
+  that was cut short, `minisSinceLong` / `postponedThisBreak` untouched (the same break is
+  owed), phase `off`, `away = true`. `cameBack` then decides: `>= idleResetMs` → fresh
+  cycle, shorter → `resumeCountdown()`, i.e. the warning immediately and the same break
+  right behind it. The interrupt is not conditional on `away` already being false: by the
+  time the screen locks, the idle watch has usually fired already.
 - **`cameBack(awayMs)`**: `away = false`. If `awayMs >= idleResetMs`: in a break →
   `effects.endBreak('interrupted')` then fresh cycle; otherwise fresh cycle. If `awayMs <
   idleResetMs`: in a break → nothing; otherwise `nextBreakAt = now + remainingMs`, arm
@@ -202,6 +213,10 @@ The 30 s margin is a constant (`WATCHDOG_MARGIN_MS`), not a setting (spec §2).
   `locked-changed` → add/remove `'lock'`. Sleep: `LoginManager.getLoginManager()`
   `prepare-for-sleep(aboutToSuspend)` → add/remove `'sleep'`. Transition ∅→non-empty emits
   `scheduler.wentAway()`; non-empty→∅ emits `scheduler.cameBack(wallNow - awaySinceWall)`.
+  Adding `'lock'` or `'sleep'` additionally emits `scheduler.wentAway({ interruptBreak: true })`
+  whether or not it is the ∅→non-empty transition. Re-installing the idle watch replaces
+  *only* the idle watch: the one-shot user-active watch is all that can clear `'idle'`
+  again, so it is left alone (and installed if `'idle'` is set and it is missing).
   DND: `new Gio.Settings({schema_id: 'org.gnome.desktop.notifications'})`, key `show-banners`,
   `scheduler.setDnd(!showBanners)` on connect and on change.
 - **notifier** — `MessageTray.getSystemSource()` + `new MessageTray.Notification({source, title,
@@ -214,8 +229,15 @@ The 30 s margin is a constant (`WATCHDOG_MARGIN_MS`), not a setting (spec §2).
   `Main.pushModal(group, {actionMode: Shell.ActionMode.NONE})` — `NONE` makes
   `WindowManager._filterKeybinding` reject every keybinding, including the overlay key. The group
   also handles `key-press-event` and returns `Clutter.EVENT_STOP`. Rebuild children on
-  `monitors-changed`. Countdown tick: 1-s `GLib.timeout_add_seconds`, guarded. The postpone
-  button is hidden when the window elapses or after use.
+  `monitors-changed` — that rebuild destroys the existing covers first, so its failures go
+  to the constructor's `onError(label, err)` (routed by `BreakController` through
+  `Watchdog.guard`, i.e. log + fire → `forceRelease`) rather than to a log line, which
+  would leave an invisible stage-sized actor holding the grab. Countdown tick: 1-s
+  `GLib.timeout_add_seconds`, guarded. The postpone button is hidden when the window elapses
+  or after use, and is **mouse only** by construction: the group owns key focus under the
+  modal grab and swallows every key event, so it carries no `can_focus` and no focus style.
+  `startBreak` refuses to raise the wall while `Main.screenShield.locked` — it is top
+  chrome, so it would cover the unlock dialog.
 - **breakController** — implements `SchedulerEffects`; owns overlay, watchdog, sound
   (`global.display.get_sound_player().play_from_file(Gio.File.new_for_path(p), 'Break over', null)`
   on `'completed'` only) and the idea pick.
@@ -224,7 +246,16 @@ The 30 s margin is a constant (`WATCHDOG_MARGIN_MS`), not a setting (spec §2).
   `stylesheet.css`) whenever mode ≠ countdown/warning. Menu, top to bottom: status line
   (non-reactive `PopupMenuItem`, refreshed on `open-state-changed` only), separator, Pause 1 h,
   Pause 2 h, Pause until tomorrow, separator, Reset, `PopupSwitchMenuItem('Breaks')` bound to
-  `breaks-enabled`. `Main.panel.addToStatusArea('hardbreak', button)`.
+  `breaks-enabled`. `Main.panel.addToStatusArea('hardbreak', button)`, then
+  `button.container.visible = !Main.sessionMode.isLocked`, kept in sync on `Main.sessionMode`
+  `updated`: `metadata.json` declares `"session-modes": ["user", "unlock-dialog"]` so the
+  extension survives the lock screen, and `Panel._hideIndicators` only hides the Shell's own
+  roles.
+- **metadata.json** — `"session-modes": ["user", "unlock-dialog"]`. Without it the extension
+  system disables every extension on lock and enables it again on unlock (`ExtensionManager`
+  `_sessionUpdated`), so every lock would be a `disable()`/`enable()` pair and therefore a
+  fresh cycle — `locked-changed` would never be seen and spec §3's "away < idle-reset →
+  resume" would be unreachable for lock and suspend.
 - **extension.ts** — `enable()`: settings → scheduler → controller → presence → indicator →
   `scheduler.start()`. `disable()`: reverse order; `controller.forceRelease('disable')` if a break
   is running; disconnect every signal; null every field (GNOME review rules).

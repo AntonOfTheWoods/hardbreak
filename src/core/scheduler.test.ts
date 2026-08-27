@@ -13,6 +13,7 @@ import type {
   ScheduleSettings,
   SchedulerEffects,
   Snapshot,
+  Timers,
 } from './types.js';
 
 export const SECOND = 1000;
@@ -410,6 +411,109 @@ describe('away', () => {
   });
 });
 
+describe('interrupted breaks (lock and suspend)', () => {
+  test('a lock during a break interrupts it and a short return brings the same break back', () => {
+    const h = started(makeHarness());
+    h.timers.advance(30 * MINUTE); // the mini break starts
+    h.timers.advance(10 * SECOND);
+    h.scheduler.wentAway({ interruptBreak: true });
+    expect(h.endReasons()).toEqual(['interrupted']);
+    expect(h.timers.pending).toBe(0); // the break-end timer is gone with it
+    // The counters are untouched: the same mini is still owed.
+    expect(h.lastState().minisSinceLong).toBe(0);
+    expect(h.lastState().nextKind).toBe('mini');
+
+    // A lid closed for a minute: wall time runs on, the monotonic clock does not.
+    h.clock.sleep(MINUTE);
+    h.scheduler.cameBack(MINUTE);
+    h.timers.advance(0); // the warning is due the instant the session is back
+    expect(h.events.filter((event) => event.type === 'warn')).toEqual([
+      // The warning that led into the interrupted break, and then its repeat.
+      { type: 'warn', kind: 'mini', secondsUntil: 10, at: 30 * MINUTE - 10 * SECOND },
+      { type: 'warn', kind: 'mini', secondsUntil: 10, at: 30 * MINUTE + 10 * SECOND },
+    ]);
+    h.timers.advance(10 * SECOND);
+    expect(h.startedKinds()).toEqual(['mini', 'mini']);
+
+    h.timers.advance(60 * SECOND);
+    expect(h.endReasons()).toEqual(['interrupted', 'completed']);
+    // Only the break that actually finished moves the alternation on.
+    expect(cycle(h)).toBe('long');
+  });
+
+  test('an absence past idle-reset after an interruption gives a fresh cycle', () => {
+    const h = started(makeHarness());
+    h.timers.advance(30 * MINUTE);
+    h.timers.advance(10 * SECOND);
+    h.scheduler.wentAway({ interruptBreak: true });
+    h.clock.sleep(6 * MINUTE);
+    h.scheduler.cameBack(6 * MINUTE);
+    expect(h.endReasons()).toEqual(['interrupted']);
+    // Six minutes locked is the break; the cycle starts over from the interval.
+    h.timers.advance(30 * MINUTE - 1);
+    expect(h.startedKinds()).toEqual(['mini']);
+    h.timers.advance(1);
+    expect(h.startedKinds()).toEqual(['mini', 'mini']);
+  });
+
+  test('going idle during a break still leaves it running', () => {
+    const h = started(makeHarness());
+    h.timers.advance(30 * MINUTE);
+    h.scheduler.wentAway();
+    expect(h.endReasons()).toEqual([]);
+    h.timers.advance(60 * SECOND);
+    expect(h.endReasons()).toEqual(['completed']);
+  });
+
+  test('a lock interrupts a break even when the idle watch fired first', () => {
+    const h = started(makeHarness());
+    h.timers.advance(30 * MINUTE);
+    h.scheduler.wentAway(); // the wall is exactly what makes you idle
+    h.timers.advance(10 * SECOND);
+    expect(h.endReasons()).toEqual([]);
+    h.scheduler.wentAway({ interruptBreak: true });
+    expect(h.endReasons()).toEqual(['interrupted']);
+    expect(h.lastState().mode).toBe('away');
+  });
+
+  test('an interruption keeps a postponement spent', () => {
+    const h = started(makeHarness());
+    h.timers.advance(30 * MINUTE);
+    expect(lastStart(h).postponeAllowed).toBe(true);
+    expect(h.scheduler.postpone()).toBe(true);
+    h.timers.advance(2 * MINUTE); // the postponed mini comes back
+    expect(lastStart(h).postponeAllowed).toBe(false);
+    h.scheduler.wentAway({ interruptBreak: true });
+    h.scheduler.cameBack(MINUTE);
+    h.timers.advance(10 * SECOND); // the warning, then the wall again
+    expect(h.startedKinds()).toEqual(['mini', 'mini', 'mini']);
+    expect(lastStart(h).postponeAllowed).toBe(false);
+  });
+
+  test('with no warning configured the wall comes straight back', () => {
+    const h = started(makeHarness({ miniWarningMs: 0 }));
+    h.timers.advance(30 * MINUTE);
+    h.timers.advance(10 * SECOND);
+    h.scheduler.wentAway({ interruptBreak: true });
+    h.scheduler.cameBack(30 * SECOND);
+    h.timers.advance(0);
+    expect(h.startedKinds()).toEqual(['mini', 'mini']);
+  });
+
+  test('outside a break the interrupt flag changes nothing', () => {
+    const h = started(makeHarness());
+    h.timers.advance(10 * MINUTE);
+    h.scheduler.wentAway({ interruptBreak: true });
+    expect(h.timers.pending).toBe(0);
+    expect(h.endReasons()).toEqual([]);
+    h.scheduler.cameBack(MINUTE);
+    h.timers.advance(20 * MINUTE - 1);
+    expect(h.startedKinds()).toEqual([]);
+    h.timers.advance(1);
+    expect(h.startedKinds()).toEqual(['mini']);
+  });
+});
+
 describe('do not disturb', () => {
   test('freezes everything while it is on and restarts fresh when it goes off', () => {
     const h = started(makeHarness());
@@ -777,5 +881,60 @@ describe('suspend', () => {
     expect(h.startedKinds()).toEqual([]);
     h.timers.advance(1);
     expect(h.startedKinds()).toEqual(['mini']);
+  });
+});
+
+describe('timer hygiene', () => {
+  /**
+   * Real GLib logs a critical when a source id is removed after its callback
+   * has already run, so a handle must be forgotten the moment it fires. The
+   * fake timers are forgiving, hence this bookkeeping wrapper.
+   */
+  function trackingTimers(clock: FakeClock): {
+    timers: Timers;
+    advance: (ms: number) => void;
+    staleClears: number[];
+  } {
+    const inner = createFakeTimers(clock);
+    const live = new Set<number>();
+    const staleClears: number[] = [];
+    const timers: Timers = {
+      set(ms, fn) {
+        const handle = inner.set(ms, () => {
+          live.delete(handle);
+          fn();
+        });
+        live.add(handle);
+        return handle;
+      },
+      clear(handle) {
+        if (!live.delete(handle)) staleClears.push(handle);
+        inner.clear(handle);
+      },
+    };
+    return { timers, advance: (ms) => inner.advance(ms), staleClears };
+  }
+
+  const silentEffects: SchedulerEffects = {
+    warn() {},
+    startBreak() {},
+    endBreak() {},
+    stateChanged() {},
+  };
+
+  test('no timer is cleared after it has fired', () => {
+    const clock = new FakeClock();
+    const { timers, advance, staleClears } = trackingTimers(clock);
+    const scheduler = new Scheduler(settings(), silentEffects, clock, timers, () => {});
+
+    scheduler.start();
+    scheduler.pauseFor(MINUTE);
+    advance(MINUTE); // the pause-end timer fires
+    scheduler.reset(); // used to clear the dead pause-end handle
+    advance(30 * MINUTE); // warning, break start
+    advance(60 * SECOND); // break end
+    scheduler.stop();
+
+    expect(staleClears).toEqual([]);
   });
 });

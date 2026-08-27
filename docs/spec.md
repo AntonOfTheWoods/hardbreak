@@ -90,6 +90,17 @@ GNOME/Ubuntu LTS for years. The requirement is Stretchly's *behaviour as configu
   `PrepareForSleep`. Same rule as idle: away ≥ `idle-reset` → fresh cycle, otherwise
   resume where it left off. (Stretchly resumes unconditionally — the "back from lunch,
   break due in 3 minutes" behaviour is explicitly unwanted.)
+  - *Addendum, 2026-08-27 (implementation).* The above only works if the extension keeps
+    running while the screen is locked, so `metadata.json` declares
+    `"session-modes": ["user", "unlock-dialog"]`; without it GNOME calls `disable()` on
+    every lock and `enable()` on every unlock, making each lock a fresh cycle and
+    `locked-changed` unobservable. The panel button hides itself on the lock screen.
+    Consequently: lock or suspend **interrupts** a running break (the overlay must never
+    end up over the unlock dialog, and no break starts while locked); the interrupted
+    break is *owed*, not skipped — a return sooner than `idle-reset` replays its warning
+    and puts the same break back up, and a return after `idle-reset` or more counts as
+    the break and starts a fresh cycle. Going idle, by contrast, never interrupts a
+    break: being idle is exactly what the wall makes you.
 - **DND** (Q9a): `org.gnome.desktop.notifications` `show-banners` = false → **full
   pause**, no breaks at all; when it comes back on, fresh cycle. This is the classroom
   guard: one Quick Settings toggle before teaching on a projector. Explicitly *not*
