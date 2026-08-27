@@ -1,10 +1,12 @@
 # hardbreak
 
 A GNOME Shell extension that makes you take screen breaks. At the appointed time it covers
-every monitor with an overlay you cannot dismiss, cannot alt-tab away from and cannot close
-— it goes away when the break is over, and not before. Because it runs inside gnome-shell
-itself it adds no processes, no tray app and no background service: the whole thing is the
-Shell's own timers and actors.
+every monitor with an overlay that owns the input grab: you cannot alt-tab away from it,
+cannot put anything in front of it and cannot close it — it goes away when the break is
+over. By default it offers a Skip button and Escape; turn on **strict mode** and it does
+not, and the countdown is the only way out. Because it runs inside gnome-shell itself it
+adds no processes, no tray app and no background service: the whole thing is the Shell's
+own timers and actors.
 
 It exists because [Stretchly](https://github.com/hovancik/stretchly) — the obvious choice
 otherwise — is an Electron app (five Chromium processes, ~287 MB) whose "strict mode" is
@@ -16,10 +18,21 @@ GNOME Shell 50, Wayland. Tested on Ubuntu 26.04.
 
 ## Before you install
 
-**This is hard mode, and it is the entire point.** There is no skip button, no dismiss, no
-escape key and no secret chord. While a break is up, the screen is not yours.
+**A break is a wall, in both modes.** When one starts, every monitor is covered by an
+overlay that owns the input grab: every keybinding is refused, nothing else can be focused,
+raised or closed, and the panel is unreachable until the break is over.
 
-What you _do_ get:
+The one thing that differs is whether you can end a break early:
+
+- **Soft mode — the default.** The overlay carries a **Skip break** button for the whole
+  break, and **Escape** does the same thing. A skipped break counts as taken: the
+  alternation moves on and the next interval starts from the skip.
+- **Strict mode** (`strict`, off by default; the switch is the first thing in the settings).
+  No Skip button, no Escape, no dismiss, no secret chord. The countdown ends the break and
+  nothing else does. **This is hard mode, and it is the entire point of the extension** —
+  everything below about a wedged session applies to it.
+
+What you get in both modes:
 
 - the **panel menu** (the alarm icon in the top bar): Pause 1 hour, Pause 2 hours, Pause
   until tomorrow, Reset, and a **Breaks** switch that turns the whole thing off. It is
@@ -38,8 +51,9 @@ Reminders_, which sends notifications you can ignore.
 
 ## If your screen stays locked
 
-Ctrl+Alt+F3 still works while the overlay is up — switching virtual terminals is handled
-below the level anything on screen can block. From the text console:
+Mostly a strict-mode concern — in soft mode Escape ends the break — but the way out is the
+same either way. Ctrl+Alt+F3 still works while the overlay is up: switching virtual
+terminals is handled below the level anything on screen can block. From the text console:
 
 ```sh
 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus \
@@ -81,8 +95,10 @@ away counts as the break, so the cycle starts fresh.
 One full-screen actor per monitor (`#633738` at 90 % opacity by default), showing the
 countdown, a suggestion of what to do with the minute — the idea lists live in
 `assets/ideas.json` and can be edited — and the postpone button while it applies. Every
-keybinding is refused while it is up, including the overview key. It ends by itself; a
-sound plays when it does.
+keybinding is refused while it is up, including the overview key. In soft mode (the
+default) there is also a **Skip break** button, which stays for the whole break, and
+**Escape** presses it; strict mode has neither. It ends by itself; a sound plays when it
+does — and only then, never for a skipped, postponed or interrupted break.
 
 ### What pauses it
 
@@ -130,8 +146,13 @@ Through _Extensions → hardbreak → ⚙_, or with `gsettings`/`dconf` under
 | `overlay-color`   | CSS hex                                             | `#633738`           |
 | `overlay-opacity` | 0–1                                                 | 0.9                 |
 | `end-sound`       | file path, or empty for silence                     | `crystal-glass.wav` |
+| `strict`          | on/off; no Skip button and no Escape during a break | false               |
 | `breaks-enabled`  | on/off; the panel switch                            | true                |
 | `first-run-done`  | on/off; set false to see the first-run notice again | false               |
+
+`strict` is read when a break starts, so switching it applies from the next break, not the
+one already on screen. With it off — the default — the overlay offers Skip and Escape; with
+it on, the countdown is the only way out (see _Before you install_).
 
 `end-sound` is played when a break **ends**, never when one starts. A bare filename is
 looked up in the extension's own `assets/` directory (that is how the default works); an
@@ -169,7 +190,7 @@ Log out and back in, then `gnome-extensions enable hardbreak@melser.org`. After 
 time the extension is toggled. `bun run uninstall:ext` removes the symlink.
 
 The first time it is enabled, hardbreak posts a notification saying what it is about to do
-and how to get out of it. That is the `first-run-done` setting above.
+and — in strict mode — how to get out of it. That is the `first-run-done` setting above.
 
 ## Reporting bugs
 

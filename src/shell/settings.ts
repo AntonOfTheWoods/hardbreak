@@ -16,7 +16,7 @@ const DEFAULT_COLOR = { r: 0x63, g: 0x37, b: 0x38 } as const;
 /**
  * Keys that feed {@link readScheduleSettings}. A `changed` on any of them means
  * the scheduler needs a new snapshot; the remaining keys are read at break time
- * (`overlay-*`, `end-sound`) or handled on their own (`breaks-enabled`).
+ * (`overlay-*`, `end-sound`, `strict`) or handled on their own (`breaks-enabled`).
  */
 export const SCHEDULE_KEYS: readonly string[] = [
   'mini-interval',
@@ -65,6 +65,15 @@ export function resolveEndSound(gs: Gio.Settings, extensionPath: string): string
   if (value === '') return null;
   if (value.startsWith('/')) return value;
   return `${extensionPath}/assets/${value}`;
+}
+
+/**
+ * Strict mode: no Skip button and no Escape key on the overlay. Read when a
+ * break starts, like the overlay style and the sound, so a change takes effect
+ * from the next break rather than under a wall that is already up.
+ */
+export function readStrict(gs: Gio.Settings): boolean {
+  return gs.get_boolean('strict');
 }
 
 export function readOverlayStyle(gs: Gio.Settings): OverlayStyle {

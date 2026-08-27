@@ -43,11 +43,14 @@ export interface BreakContext {
   /** Absolute path of the end sound, or `null` for silence. */
   endSound: string | null;
   ideas: IdeaBook;
+  /** `strict`: no Skip button and no Escape on this break's overlay. */
+  strict: boolean;
 }
 
 /** The part of the scheduler the controller drives back. */
 export interface BreakSchedulerTarget {
   postpone(): boolean;
+  skip(): boolean;
   abortBreak(): void;
 }
 
@@ -122,7 +125,17 @@ export class BreakController implements SchedulerEffects {
       const idea = pickIdea(context.ideas, request.kind);
       const postponeMs =
         request.kind === 'mini' ? context.schedule.miniPostponeMs : context.schedule.longPostponeMs;
-      this.overlay.show(request, idea, context.overlayStyle, postponeMs, () => this.onPostpone());
+      // The mode is decided here, once, from the settings as they are at the
+      // start of *this* break: the scheduler knows nothing about `strict`, and
+      // a strict overlay is simply one that was never given a way to skip.
+      this.overlay.show(
+        request,
+        idea,
+        context.overlayStyle,
+        postponeMs,
+        () => this.onPostpone(),
+        context.strict ? null : () => this.onSkip(),
+      );
       this.startTick();
       this.schedulePostponeHide(request);
     });
@@ -134,6 +147,8 @@ export class BreakController implements SchedulerEffects {
     // watchdog will do the release instead.
     this.teardown();
     this.watchdog.disarm();
+    // `'completed'` only: a skipped, postponed, interrupted or aborted break
+    // has not earned the chime that says the break is over.
     if (reason === 'completed') this.playEndSound();
   }
 
@@ -245,6 +260,13 @@ export class BreakController implements SchedulerEffects {
     const scheduler = this.scheduler;
     if (!scheduler) return false;
     return this.watchdog.guard('postpone', () => scheduler.postpone()) === true;
+  }
+
+  /** Soft mode's Skip button and Escape key; never reached in strict mode. */
+  private onSkip(): boolean {
+    const scheduler = this.scheduler;
+    if (!scheduler) return false;
+    return this.watchdog.guard('skip', () => scheduler.skip()) === true;
   }
 
   /** One repaint a second, computed from the clock so drift cannot accumulate. */

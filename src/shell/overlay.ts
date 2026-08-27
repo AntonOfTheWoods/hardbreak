@@ -3,13 +3,19 @@
  *
  * One full-monitor cover per monitor, all inside a single group that owns the
  * modal grab, so releasing input is one `popModal` call however many monitors
- * are attached. There is no dismiss, no escape chord and no end-early key: key
- * events that reach the group are swallowed. The only way out other than the
- * countdown is the watchdog calling {@link Overlay.hide}.
+ * are attached. Key events that reach the group are swallowed, whatever the
+ * mode: nothing typed under the wall reaches anything else.
  *
- * The postpone button is therefore **mouse only**: the modal grab gives key
- * focus to the group, whose key handlers stop every event before it can reach a
- * child, so there is no keyboard route to the button by construction.
+ * In strict mode (`onSkip` is `null`) that is the whole story — there is no
+ * dismiss, no escape chord and no end-early key, and the only way out other
+ * than the countdown is the watchdog calling {@link Overlay.hide}. In soft
+ * mode (the default) the group additionally offers a Skip button and treats
+ * Escape as a press of it; every other key is still swallowed.
+ *
+ * The buttons are **mouse only**: the modal grab gives key focus to the group,
+ * whose key handlers stop every event before it can reach a child, so there is
+ * no keyboard route to a button by construction. Escape is handled by the
+ * group itself for exactly that reason.
  *
  * Anything the Shell calls into here that could leave the grab in place — the
  * `monitors-changed` rebuild above all — reports through `onError` so the
@@ -33,6 +39,8 @@ interface Shown {
   /** How far the break is pushed back, for the button label. */
   postponeMs: number;
   onPostpone: () => boolean;
+  /** Soft mode's way out, or `null` in strict mode (no button, no Escape). */
+  onSkip: (() => boolean) | null;
 }
 
 export class Overlay {
@@ -47,6 +55,8 @@ export class Overlay {
   private remainingMs = 0;
   private postponeOffered = false;
   private postponeUsed = false;
+  /** Latched so a double press cannot ask the scheduler to skip twice. */
+  private skipUsed = false;
 
   constructor(
     private readonly log: Log,
@@ -73,13 +83,16 @@ export class Overlay {
     style: OverlayStyle,
     postponeMs: number,
     onPostpone: () => boolean,
+    /** `null` puts up a strict wall: no Skip button and no Escape. */
+    onSkip: (() => boolean) | null,
   ): void {
     if (this.group) this.hide();
 
-    this.shown = { request, idea, style, postponeMs, onPostpone };
+    this.shown = { request, idea, style, postponeMs, onPostpone, onSkip };
     this.remainingMs = request.durationMs;
     this.postponeOffered = request.postponeAllowed && postponeMs > 0;
     this.postponeUsed = false;
+    this.skipUsed = false;
 
     const group = new St.Widget({
       name: 'hardbreakOverlay',
@@ -95,8 +108,13 @@ export class Overlay {
     );
     // Hard enforcement: nothing typed while the wall is up does anything. With
     // ActionMode.NONE the Shell's own keybindings (including Super) are already
-    // rejected; this stops everything else that bubbles up to the group.
-    group.connect('key-press-event', () => Clutter.EVENT_STOP);
+    // rejected; this stops everything else that bubbles up to the group. The
+    // one key that is *read* rather than merely eaten is Escape in soft mode,
+    // and it is still not passed on to anybody.
+    group.connect('key-press-event', (_actor, event) => {
+      if (onSkip !== null && event.get_key_symbol() === Clutter.KEY_Escape) this.onSkipRequested();
+      return Clutter.EVENT_STOP;
+    });
     group.connect('key-release-event', () => Clutter.EVENT_STOP);
 
     // Assigned before the Shell calls below so that a throw in any of them
@@ -274,6 +292,22 @@ export class Overlay {
       box.add_child(button);
     }
 
+    // Soft mode only, and below postpone: postponing is the choice worth
+    // encouraging, skipping the one worth having to look at. Unlike postpone
+    // it stays visible for the whole break — an escape hatch that vanishes
+    // three seconds in would be worse than none at all.
+    if (shown.onSkip !== null) {
+      // Mouse-only for the same reason as the postpone button; Escape is the
+      // keyboard route and the group handles it directly.
+      const button = new St.Button({
+        label: 'Skip break',
+        style_class: 'hardbreak-skip',
+        x_align: Clutter.ActorAlign.CENTER,
+      });
+      button.connect('clicked', () => this.onSkipRequested());
+      box.add_child(button);
+    }
+
     return box;
   }
 
@@ -303,5 +337,32 @@ export class Overlay {
       this.onError('the postpone handler', err);
     }
     if (!granted && this.group) this.hidePostpone();
+  }
+
+  /**
+   * The Skip button, or Escape. Soft mode only: `onSkip` is `null` in strict
+   * mode, so neither route exists.
+   *
+   * A granted skip tears this overlay down synchronously (scheduler →
+   * `endBreak('skipped')` → controller teardown), exactly like a granted
+   * postponement, so nothing may touch the actors afterwards.
+   */
+  private onSkipRequested(): void {
+    if (this.skipUsed) return;
+    const onSkip = this.shown?.onSkip;
+    if (!onSkip) return;
+    this.skipUsed = true;
+    let granted = false;
+    try {
+      granted = onSkip();
+    } catch (err) {
+      // The controller already guards `skip`, so reaching this means the guard
+      // itself failed: the wall may still be up over a half-applied
+      // transition, which is the watchdog's business, not a log line's.
+      this.onError('the skip handler', err);
+    }
+    // A refusal should not be able to happen while the wall is up, but if the
+    // scheduler ever says no the button must not be dead for the rest of it.
+    if (!granted && this.group) this.skipUsed = false;
   }
 }

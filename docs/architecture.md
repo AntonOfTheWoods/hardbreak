@@ -21,7 +21,7 @@ src/
     settings.ts              Gio.Settings → ScheduleSettings snapshot, `changed` fan-out
     presence.ts              idle monitor + screenShield + login1 + DND → scheduler events
     notifier.ts              warning notifications (MessageTray)
-    overlay.ts               per-monitor St actors, modal grab, countdown label, postpone button
+    overlay.ts               per-monitor St actors, modal grab, countdown label, postpone + skip buttons
     breakController.ts       SchedulerEffects impl: overlay + watchdog + sound
     indicator.ts             PanelMenu.Button + menu
   extension.ts               Extension subclass: wires everything in enable(), tears down in disable()
@@ -58,10 +58,12 @@ Units are chosen so `Gio.Settings.bind()` works without mapping code in prefs.
 | `overlay-color` | s | `#633738` | | CSS hex colour |
 | `overlay-opacity` | d | 0.9 | 0..1 | |
 | `end-sound` | s | `crystal-glass.wav` | | relative → `<extension dir>/assets/<name>`; absolute path used verbatim; empty = silent |
+| `strict` | b | false | | no Skip button and no Escape during a break; read at break start, so it applies from the next break. Off (the default) is *soft mode*: the same modal wall, plus a Skip button and Escape |
 | `breaks-enabled` | b | true | | the panel-menu Disable toggle; persisted so a Shell restart keeps the choice |
-| `first-run-done` | b | false | | set by `enable()` after the one-off notice explaining that breaks cannot be skipped and how to recover a wedged session; set back to false to see it again |
+| `first-run-done` | b | false | | set by `enable()` after the one-off notice explaining what a break does (and, in strict mode, that it cannot be skipped and how to recover a wedged session); set back to false to see it again |
 
-`ScheduleSettings` (core) is the milliseconds/fraction form of the first 11 keys:
+`ScheduleSettings` (core) is the milliseconds/fraction form of the eleven schedule keys
+(`mini-interval` … `morning-hour`):
 
 ```ts
 export interface ScheduleSettings {
@@ -81,7 +83,7 @@ export interface Clock { now(): number /* monotonic ms */; wallNow(): number /* 
 export type TimerHandle = number & { readonly __brand: 'TimerHandle' }; // or an opaque object
 export interface Timers { set(ms: number, fn: () => void): TimerHandle; clear(h: TimerHandle): void }
 export type BreakKind = 'mini' | 'long';
-export type BreakEndReason = 'completed' | 'postponed' | 'interrupted' | 'aborted';
+export type BreakEndReason = 'completed' | 'postponed' | 'interrupted' | 'aborted' | 'skipped';
 
 export interface SchedulerEffects {
   warn(kind: BreakKind, secondsUntil: number): void;
@@ -140,6 +142,12 @@ first true of disabled / dnd / away / paused, else the phase.
   `!postponedThisBreak`, and `now < breakStartedAt + durationMs * postponeWindow`. On success:
   `effects.endBreak('postponed')`, `postponedThisBreak = true`, counters untouched (same kind
   comes back), `nextBreakAt = now + postponeMs(kind)`, arm (warning included).
+- **`skip()`** (soft mode's Skip button or Escape; strict mode never offers either): returns
+  `false` unless phase is `break`. On success: cancel the break-end timer,
+  `effects.endBreak('skipped')`, then advance exactly as `completed` — a skipped break is
+  spent, not owed, so the alternation carries on and the next interval runs from the skip.
+  The scheduler knows nothing about `strict`: the controller decides whether the overlay is
+  given any way to call this. `'skipped'` is never treated as `'completed'` (no end sound).
 - **`abortBreak()`** (watchdog fired or overlay threw): if phase is `break`, cancel the
   break-end timer, `effects.endBreak('aborted')`, then advance exactly as `completed` (the
   user has had the wall for at least the full duration by the time the watchdog fires).
@@ -231,7 +239,13 @@ The 30 s margin is a constant (`WATCHDOG_MARGIN_MS`), not a setting (spec §2).
   box with countdown label, idea title + body labels, and the postpone `St.Button`. Then
   `Main.pushModal(group, {actionMode: Shell.ActionMode.NONE})` — `NONE` makes
   `WindowManager._filterKeybinding` reject every keybinding, including the overlay key. The group
-  also handles `key-press-event` and returns `Clutter.EVENT_STOP`. Rebuild children on
+  also handles `key-press-event` and returns `Clutter.EVENT_STOP`. `show(…, onSkip)` takes the
+  soft-mode escape hatch as its last argument: `null` is strict mode (no Skip button, and
+  `key-press-event` merely swallows Escape like everything else), non-null adds a
+  `hardbreak-skip` `St.Button` below the postpone button — visible for the *whole* break,
+  unlike postpone — and makes `Clutter.KEY_Escape` call it. A granted skip tears the overlay
+  down synchronously, exactly like a granted postponement, so nothing may touch the actors
+  afterwards. Rebuild children on
   `monitors-changed` — that rebuild destroys the existing covers first, so its failures go
   to the constructor's `onError(label, err)` (routed by `BreakController` through
   `Watchdog.guard`, i.e. log + fire → `forceRelease`) rather than to a log line, which
@@ -243,7 +257,10 @@ The 30 s margin is a constant (`WATCHDOG_MARGIN_MS`), not a setting (spec §2).
   chrome, so it would cover the unlock dialog.
 - **breakController** — implements `SchedulerEffects`; owns overlay, watchdog, sound
   (`global.display.get_sound_player().play_from_file(Gio.File.new_for_path(p), 'Break over', null)`
-  on `'completed'` only) and the idea pick.
+  on `'completed'` only — a skipped break plays nothing) and the idea pick. `BreakContext`
+  carries `strict`; `startBreak` passes `context.strict ? null : () => this.onSkip()`, where
+  `onSkip` is `watchdog.guard('skip', () => scheduler.skip()) === true`, the same shape as
+  postpone. `BreakSchedulerTarget` is therefore `postpone` + `skip` + `abortBreak`.
 - **indicator** — `PanelMenu.Button(0.0, 'hardbreak', false)` with an `St.Icon`
   (`alarm-symbolic`, `system-status-icon`); style class `hardbreak-paused` (dimmed in
   `stylesheet.css`) whenever mode ≠ countdown/warning. Menu, top to bottom: status line
@@ -261,8 +278,15 @@ The 30 s margin is a constant (`WATCHDOG_MARGIN_MS`), not a setting (spec §2).
   resume" would be unreachable for lock and suspend.
 - **extension.ts** — `enable()`: settings → scheduler → controller → presence → indicator →
   `scheduler.start()` → the first-run notice (`first-run-done`, guarded: it must never fail
-  `enable()`). `disable()`: reverse order; `controller.forceRelease('disable')` if a break
-  is running; disconnect every signal; null every field (GNOME review rules).
+  `enable()`; its wording follows `readStrict(settings)` at enable time, since it is shown
+  once and must not promise a Skip button that is switched off). `readContext()` fills
+  `strict` alongside the other break-time fields. `disable()`: reverse order;
+  `controller.forceRelease('disable')` if a break is running; disconnect every signal; null
+  every field (GNOME review rules).
+- **prefs.ts** — first group is **Enforcement**, an `Adw.SwitchRow` bound to `strict`; its
+  subtitle says the change applies from the next break and repeats the Ctrl+Alt+F3 recovery,
+  because this is the switch that removes every other way out of a running break. The
+  **Breaks** switch stays in the Schedule group.
 
 ## 6. Tooling
 

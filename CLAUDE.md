@@ -32,8 +32,9 @@ rebase-only git) all apply. Restated here only where this project is specific:
 
 ## Safety
 
-- Enforcement is Hard: no dismiss, no escape chord. The **watchdog** (independent
-  release deadline + release on exception) is the only safety net — treat it as the most
+- Enforcement in **strict mode** is Hard: no dismiss, no escape chord. Soft mode (the
+  default) adds a Skip button and Escape, nothing else — the modal, the keybinding block
+  and the **watchdog** are identical in both modes; treat the watchdog as the most
   important code in the repo.
 - Never test the modal/overlay path on the live session first: use
   `dbus-run-session -- gnome-shell --devkit`.

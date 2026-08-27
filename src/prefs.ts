@@ -33,6 +33,7 @@ export default class HardbreakPreferences extends ExtensionPreferences {
       icon_name: 'alarm-symbolic',
     });
 
+    page.add(buildEnforcement(settings));
     page.add(buildSchedule(settings));
     page.add(buildBreak(settings, 'mini'));
     page.add(buildBreak(settings, 'long'));
@@ -46,6 +47,29 @@ export default class HardbreakPreferences extends ExtensionPreferences {
 }
 
 // -- groups ------------------------------------------------------------------
+
+/**
+ * How hard a break is. `strict` is read when a break starts, so the subtitle
+ * says when a change takes effect, and it repeats the recovery instructions
+ * because this is the switch that removes every other way out.
+ */
+function buildEnforcement(settings: Gio.Settings): Adw.PreferencesGroup {
+  const group = new Adw.PreferencesGroup({
+    title: 'Enforcement',
+    description:
+      'A break covers every screen and refuses every keybinding either way. Strict mode removes the two ways out of one that has already started.',
+  });
+  group.add(
+    switchRow(settings, 'strict', {
+      title: 'Strict mode',
+      subtitle:
+        'No Skip button and no Escape key during a break — the only way out is the countdown. ' +
+        'Applies from the next break. If the screen ever stays locked: Ctrl+Alt+F3 and ' +
+        'gnome-extensions disable hardbreak@melser.org (see README).',
+    }),
+  );
+  return group;
+}
 
 function buildSchedule(settings: Gio.Settings): Adw.PreferencesGroup {
   const group = new Adw.PreferencesGroup({

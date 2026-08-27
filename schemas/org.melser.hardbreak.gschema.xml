@@ -2,6 +2,12 @@
 <schemalist>
   <schema id="org.melser.hardbreak" path="/org/melser/hardbreak/">
 
+    <key name="strict" type="b">
+      <default>false</default>
+      <summary>Strict mode: no Skip button and no Escape key during a break; the only way out is the countdown (or the watchdog).</summary>
+      <description>When off (the default) the break overlay carries a Skip button and the Escape key ends the break early. The overlay is a modal wall either way: every keybinding is still refused and input is still grabbed. Read when a break starts, so a change applies from the next break.</description>
+    </key>
+
     <key name="mini-interval" type="i">
       <default>30</default>
       <range min="1" max="240"/>
@@ -101,7 +107,7 @@
     <key name="first-run-done" type="b">
       <default>false</default>
       <summary>Whether the first-run notice has been shown</summary>
-      <description>Set to true once the notification explaining that breaks cannot be skipped, and how to recover a wedged session, has been shown. Set it back to false to see that notice again.</description>
+      <description>Set to true once the notification explaining what a break does — and, in strict mode, that it cannot be skipped and how to recover a wedged session — has been shown. Set it back to false to see that notice again.</description>
     </key>
 
     <key name="breaks-enabled" type="b">

@@ -19,6 +19,7 @@ import { Presence } from './shell/presence.js';
 import {
   readOverlayStyle,
   readScheduleSettings,
+  readStrict,
   resolveEndSound,
   SCHEDULE_KEYS,
 } from './shell/settings.js';
@@ -100,6 +101,7 @@ export default class HardbreakExtension extends Extension {
       overlayStyle: readOverlayStyle(settings),
       endSound: resolveEndSound(settings, this.path),
       ideas: this.ideas,
+      strict: readStrict(settings),
     });
 
     const controller = new BreakController(
@@ -141,9 +143,13 @@ export default class HardbreakExtension extends Extension {
 
   /**
    * Once, ever: tell the user what they have just switched on. An extension
-   * that covers every monitor with something you cannot dismiss has to say so
-   * before it does it for the first time, and has to say how to get out of a
-   * session that will not come back.
+   * that covers every monitor has to say so before it does it for the first
+   * time — and, in strict mode, has to say how to get out of a session that
+   * will not come back.
+   *
+   * The wording follows `strict` as it stands at enable time, because that is
+   * the mode the first break will be in; the notice is shown once and never
+   * revisited, so it must not promise a Skip button that has been switched off.
    *
    * Failing here costs the notice and nothing else — `enable()` must not fall
    * over because the message tray was unhappy.
@@ -151,11 +157,16 @@ export default class HardbreakExtension extends Extension {
   private showFirstRunNotice(settings: Gio.Settings): void {
     try {
       if (settings.get_boolean('first-run-done')) return;
+      const strict = readStrict(settings);
       postNotice(
         'hardbreak is on',
-        'Breaks are undismissable: no skip, no escape key. Pause or switch breaks off from ' +
-          'the alarm icon in the top bar. If the screen ever stays locked, press Ctrl+Alt+F3, ' +
-          'log in and run: gnome-extensions disable hardbreak@melser.org (see README).',
+        strict
+          ? 'Breaks are undismissable: no skip, no escape key. Pause or switch breaks off from ' +
+              'the alarm icon in the top bar. If the screen ever stays locked, press Ctrl+Alt+F3, ' +
+              'log in and run: gnome-extensions disable hardbreak@melser.org (see README).'
+          : 'Breaks cover every screen until the countdown ends. The Skip button or Escape ends ' +
+              'one early; turn on Strict mode in the settings to remove them. Pause or switch ' +
+              'breaks off from the alarm icon in the top bar.',
         this.log,
       );
       settings.set_boolean('first-run-done', true);

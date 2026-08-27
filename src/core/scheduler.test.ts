@@ -335,6 +335,89 @@ describe('postpone', () => {
   });
 });
 
+describe('skip (soft mode)', () => {
+  test('ends the break, spends it, and runs the next interval from the skip', () => {
+    const h = started(makeHarness());
+    h.timers.advance(30 * MINUTE);
+    h.timers.advance(20 * SECOND);
+    expect(h.scheduler.skip()).toBe(true);
+    expect(h.endReasons()).toEqual(['skipped']);
+    // Spent, not owed: the alternation carries on exactly as after a completion.
+    expect(h.lastState().minisSinceLong).toBe(1);
+    expect(h.lastState().nextKind).toBe('long');
+    expect(h.lastState().nextBreakAt).toBe(30 * MINUTE + 20 * SECOND + 30 * MINUTE);
+    expect(h.lastState().mode).toBe('countdown');
+    expect(cycle(h)).toBe('long');
+  });
+
+  test('is refused outside a break and emits nothing', () => {
+    const h = started(makeHarness());
+    expect(h.scheduler.skip()).toBe(false);
+    h.timers.advance(20 * MINUTE);
+    expect(h.scheduler.skip()).toBe(false);
+    h.timers.advance(30 * MINUTE - 20 * MINUTE + 60 * SECOND); // through a whole break
+    h.clear();
+    expect(h.scheduler.skip()).toBe(false);
+    expect(h.events).toEqual([]);
+  });
+
+  test('is never treated as a completion, and no completion follows it', () => {
+    const h = started(makeHarness());
+    h.timers.advance(30 * MINUTE);
+    expect(h.scheduler.skip()).toBe(true);
+    // The break-end timer is gone with it: sitting out the full duration must
+    // not produce the 'completed' that would play the end-of-break sound.
+    h.timers.advance(60 * SECOND);
+    expect(h.endReasons()).toEqual(['skipped']);
+    expect(h.endReasons()).not.toContain('completed');
+  });
+
+  test('works on a break that came back from a postponement', () => {
+    const h = started(makeHarness());
+    h.timers.advance(30 * MINUTE);
+    expect(h.scheduler.postpone()).toBe(true);
+    h.timers.advance(2 * MINUTE); // the same mini comes back
+    expect(lastStart(h).postponeAllowed).toBe(false);
+    expect(h.scheduler.skip()).toBe(true);
+    expect(h.endReasons()).toEqual(['postponed', 'skipped']);
+    expect(h.lastState().minisSinceLong).toBe(1);
+    // The spent postponement is cleared with the break, like any other end.
+    h.timers.advance(30 * MINUTE);
+    expect(lastStart(h).kind).toBe('long');
+    expect(lastStart(h).postponeAllowed).toBe(true);
+  });
+
+  test('a skip while DND arrived mid-break ends the break and then sits idle', () => {
+    const h = started(makeHarness());
+    h.timers.advance(30 * MINUTE);
+    h.scheduler.setDnd(true);
+    h.timers.advance(10 * SECOND);
+    expect(h.scheduler.skip()).toBe(true);
+    expect(h.endReasons()).toEqual(['skipped']);
+    expect(h.lastState().mode).toBe('dnd');
+    expect(h.lastState().nextBreakAt).toBeNull();
+    expect(h.timers.pending).toBe(0);
+    h.timers.advance(5 * 60 * MINUTE);
+    expect(h.startedKinds()).toEqual(['mini']);
+  });
+
+  test('a skip while away mid-break ends the break and arms nothing', () => {
+    const h = started(makeHarness());
+    h.timers.advance(30 * MINUTE);
+    h.scheduler.wentAway(); // the wall is exactly what makes you idle
+    h.timers.advance(10 * SECOND);
+    expect(h.scheduler.skip()).toBe(true);
+    expect(h.endReasons()).toEqual(['skipped']);
+    expect(h.lastState().mode).toBe('away');
+    expect(h.timers.pending).toBe(0);
+    // There is no frozen countdown to resume, so a short return starts a fresh
+    // cycle — exactly what a break that *completes* while away already does.
+    h.scheduler.cameBack(10 * SECOND);
+    expect(h.lastState().mode).toBe('countdown');
+    expect(cycle(h)).toBe('mini');
+  });
+});
+
 describe('away', () => {
   test('a short absence resumes with the frozen remaining time', () => {
     const h = started(makeHarness());

@@ -24,7 +24,11 @@ export interface Timers {
 
 export type BreakKind = 'mini' | 'long';
 
-export type BreakEndReason = 'completed' | 'postponed' | 'interrupted' | 'aborted';
+/**
+ * Why a break stopped. `'skipped'` is the soft-mode Skip button (or Escape);
+ * strict mode never produces it, because the overlay offers neither.
+ */
+export type BreakEndReason = 'completed' | 'postponed' | 'interrupted' | 'aborted' | 'skipped';
 
 /** Everything the overlay needs to put a break on screen. */
 export interface BreakRequest {

@@ -50,6 +50,28 @@
   background-color: rgba(255, 255, 255, 0.32);
 }
 
+/* Soft mode only. Deliberately quieter than postpone: transparent, a hairline
+   border, no fill until it is pointed at — an available way out, not an
+   inviting one. */
+.hardbreak-skip {
+  font-size: 16px;
+  color: rgba(255, 255, 255, 0.75);
+  padding: 8px 20px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background-color: transparent;
+}
+
+.hardbreak-skip:hover {
+  color: #ffffff;
+  background-color: rgba(255, 255, 255, 0.12);
+}
+
+.hardbreak-skip:active {
+  color: #ffffff;
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
 /* Panel icon while breaks are not counting down (disabled / paused / DND / away). */
 .hardbreak-paused {
   opacity: 0.5;

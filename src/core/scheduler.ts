@@ -102,6 +102,28 @@ export class Scheduler {
   }
 
   /**
+   * Overlay Skip button, or Escape — soft mode only. Returns whether the break
+   * was ended; refused unless a break is actually running.
+   *
+   * The scheduler knows nothing about the `strict` setting: the controller
+   * decides whether the overlay offers a way to call this at all, so a strict
+   * break simply never does. Counters advance exactly as for a completed break
+   * — a skipped break is spent, not owed, so the alternation carries on and the
+   * next interval runs from the skip.
+   *
+   * `'skipped'` is deliberately not `'completed'`: nothing that only a finished
+   * break earns (the end sound, above all) may follow from it.
+   */
+  skip(): boolean {
+    if (this.phase !== 'break') return false;
+    this.clearTimer('breakEnd');
+    this.effects.endBreak('skipped');
+    this.advanceAfterBreak();
+    this.emitState();
+    return true;
+  }
+
+  /**
    * Watchdog release, or an overlay that threw. Counters advance exactly as for
    * a completed break: by the time the watchdog fires the user has had the wall
    * in front of them for at least the full duration.

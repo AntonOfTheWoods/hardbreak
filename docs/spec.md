@@ -65,6 +65,15 @@ GNOME/Ubuntu LTS for years. The requirement is Stretchly's *behaviour as configu
   functional (section 6). This matches Stretchly's default
   `showTrayMenuInStrictMode: false` behaviour, which Anton had assumed was self-inflicted.
 
+*Addendum, 2026-08-27 (Q1 revisited for publication).* A `strict` setting, **default off**.
+Soft mode (the default) keeps the modal wall exactly as above — every keybinding still
+refused, input still grabbed — but the overlay carries a **Skip break** button (visible for
+the whole break) and **Escape** ends the break early; a skipped break ends with the new
+`'skipped'` reason, plays no sound, and counts as taken (counters advance, next interval
+runs from the skip). Strict mode is the original Hard behaviour: no Skip, no Escape, only
+the countdown and the watchdog. Anton runs strict. The watchdog, the modal and the
+keybinding block are identical in both modes.
+
 ## 3. Schedule (Q5) — features with defaults; every value is a GSetting
 
 | Setting | Default | Notes |
@@ -183,8 +192,8 @@ Local only. Public GitHub repo, no extensions.gnome.org submission, no release z
 Revisit e.g.o only if it is wanted on a second machine (tsc output is review-readable).
 
 *Addendum, 2026-08-27 (decision reversed).* Publish on e.g.o and as GitHub release zips;
-see the README. Remaining decisions for publication: soft/strict switch (Q1 revisit), and
-supported Shell versions (48–50 wanted, only 50 tested).
+see the README. The soft/strict switch (Q1 revisit) is decided — see the §2 addendum.
+Remaining decision for publication: supported Shell versions (48–50 wanted, only 50 tested).
 
 ## 11. Cut-over from Stretchly (Q12a)
 
