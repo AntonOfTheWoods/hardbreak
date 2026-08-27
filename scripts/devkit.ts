@@ -31,6 +31,16 @@ console.log(
 const profile = writeProfile();
 const inner = join(root, 'scripts', 'devkit-inner.ts');
 
+// `gnome-shell --devkit` runs headless on a virtual monitor and asks Mutter to
+// launch a separate viewer window, /usr/libexec/mutter-devkit. Without it the
+// Shell still starts — invisibly. On Ubuntu the viewer ships in mutter-dev-bin.
+const viewer = '/usr/libexec/mutter-devkit';
+if (!existsSync(viewer)) {
+  fail(
+    `devkit: ${viewer} is missing, so the nested Shell would run with no window. Install it: sudo apt install mutter-dev-bin`,
+  );
+}
+
 // The devkit window is a client of the *live* compositor. A shell whose
 // environment predates the current login (a tmux server, say) has no
 // WAYLAND_DISPLAY, and the nested Shell then falls back to X11 with a stale

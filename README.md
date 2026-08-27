@@ -227,6 +227,8 @@ zip attached and the tag message as the notes (`.github/workflows/`).
 
 **Never exercise the overlay on the live session first** — use `bun run devkit`, where a
 bug locks a window rather than the desktop.
+The devkit needs Mutter's viewer, `/usr/libexec/mutter-devkit` (`sudo apt install
+mutter-dev-bin` on Ubuntu); without it the nested Shell runs headless and no window appears.
 
 ```sh
 bun run build                          # dist/
