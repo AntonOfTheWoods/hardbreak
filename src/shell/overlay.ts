@@ -60,11 +60,7 @@ export class Overlay {
 
   constructor(
     private readonly log: Log,
-    /**
-     * Reported failures reach the watchdog (log + fire → force release). Only
-     * for failures that may have left the modal grabbed; per-actor cosmetic
-     * failures are logged and isolated instead.
-     */
+    /** Callback failures reach the watchdog to release the modal. */
     private readonly onError: (label: string, err: unknown) => void,
   ) {}
 
@@ -143,11 +139,7 @@ export class Overlay {
     this.remainingMs = Math.max(0, remainingMs);
     const text = formatCountdown(this.remainingMs);
     for (const label of this.countdownLabels) {
-      try {
-        label.set_text(text);
-      } catch (err) {
-        this.log('hardbreak: could not update a countdown label', err);
-      }
+      label.set_text(text);
     }
   }
 
@@ -155,18 +147,12 @@ export class Overlay {
   hidePostpone(): void {
     this.postponeOffered = false;
     for (const button of this.postponeButtons) {
-      try {
-        button.visible = false;
-      } catch (err) {
-        this.log('hardbreak: could not hide a postpone button', err);
-      }
+      button.visible = false;
     }
   }
 
   /**
-   * Take the wall down. Idempotent, and every step is isolated: a failure to
-   * remove the chrome must not stop the modal from being popped, because the
-   * grab is what holds the session.
+   * Release input before removing the actors, including after a failed show().
    */
   hide(): void {
     const grab = this.grab;
@@ -182,11 +168,7 @@ export class Overlay {
     const monitorsChangedId = this.monitorsChangedId;
     this.monitorsChangedId = 0;
     if (monitorsChangedId !== 0) {
-      try {
-        Main.layoutManager.disconnect(monitorsChangedId);
-      } catch (err) {
-        this.log('hardbreak: failed to disconnect monitors-changed', err);
-      }
+      Main.layoutManager.disconnect(monitorsChangedId);
     }
 
     const group = this.group;
@@ -196,16 +178,14 @@ export class Overlay {
     this.postponeButtons = [];
     this.postponeOffered = false;
     if (group) {
+      // show() can fail before chrome registration completes. Still destroy the
+      // actor if removing that incomplete registration fails.
       try {
         Main.layoutManager.removeChrome(group);
       } catch (err) {
         this.log('hardbreak: removeChrome failed', err);
       }
-      try {
-        group.destroy();
-      } catch (err) {
-        this.log('hardbreak: destroying the overlay group failed', err);
-      }
+      group.destroy();
     }
   }
 
@@ -327,16 +307,12 @@ export class Overlay {
     const onPostpone = this.shown?.onPostpone;
     if (!onPostpone) return;
     this.postponeUsed = true;
-    let granted = false;
     try {
-      granted = onPostpone();
+      const granted = onPostpone();
+      if (!granted && this.group) this.hidePostpone();
     } catch (err) {
-      // The controller already guards `postpone`, so reaching this means the
-      // guard itself failed: the wall may be up with a half-applied transition
-      // behind it, which is the watchdog's business, not a log line's.
       this.onError('the postpone handler', err);
     }
-    if (!granted && this.group) this.hidePostpone();
   }
 
   /**

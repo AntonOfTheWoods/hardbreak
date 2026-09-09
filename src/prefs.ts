@@ -1,12 +1,6 @@
 /**
- * The preferences page (spec §7).
- *
- * Runs in the Extensions app, not in gnome-shell: there is no `global` here and
- * nothing may import `gi://St`, `gi://Meta`, `gi://Shell` or any `resource:///`
- * module other than this one.
- *
- * The schema stores minutes/seconds/percent precisely so every numeric row is a
- * plain `Gio.Settings.bind()` with no mapping code.
+ * Preferences run in a separate GTK process. Keep Shell UI imports out of here.
+ * Schema units match the numeric rows for direct Gio.Settings bindings.
  */
 
 import Adw from 'gi://Adw';

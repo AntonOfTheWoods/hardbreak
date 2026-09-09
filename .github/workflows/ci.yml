@@ -20,7 +20,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.2
 
       # glib-compile-schemas (libglib2.0-bin) is the only system tool the build
       # needs. `gnome-extensions` lives in the gnome-shell package — a few

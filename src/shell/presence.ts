@@ -1,7 +1,7 @@
 /**
  * "Is the user at the machine, and are breaks wanted right now?" (architecture §5).
  *
- * Three things count as being away — idle, locked, suspended — and they overlap
+ * Idle, the lock screen, screen blanking and suspend count as being away and overlap
  * constantly (locking makes you idle; suspending happens while locked), so they
  * are kept in a set and only the ∅ ↔ non-empty transitions reach the scheduler.
  * The one exception is a running break: lock and suspend must take the wall down
@@ -25,12 +25,18 @@ export interface PresenceTarget {
   setDnd(on: boolean): void;
 }
 
-type AwayReason = 'idle' | 'lock' | 'sleep';
+type AwayReason = 'idle' | 'lock' | 'session' | 'sleep';
 
 /** `Main.screenShield` is `any` in @girs; this is all that is used of it. */
 interface ScreenShieldLike {
   readonly locked: boolean;
   connect(signal: 'locked-changed', callback: () => void): number;
+  disconnect(id: number): void;
+}
+
+interface SessionModeLike {
+  readonly isLocked: boolean;
+  connect(signal: 'updated', callback: () => void): number;
   disconnect(id: number): void;
 }
 
@@ -58,13 +64,14 @@ export class Presence {
   private shield: ScreenShieldLike | null = null;
   private shieldId = 0;
 
+  private sessionMode: SessionModeLike | null = null;
+  private sessionModeId = 0;
+
   private loginManager: SleepEmitter | null = null;
   private sleepId = 0;
 
   private dndSettings: Gio.Settings | null = null;
   private dndChangedId = 0;
-
-  private enabled = false;
 
   constructor(
     private readonly scheduler: PresenceTarget,
@@ -78,20 +85,28 @@ export class Presence {
    * already in (locked at login, DND left on from yesterday).
    */
   enable(): void {
-    if (this.enabled) return;
-    this.enabled = true;
-
     this.installIdleWatch();
 
-    const shield = Main.screenShield as ScreenShieldLike | null | undefined;
+    // Shell omits screenShield when its login manager cannot lock the session.
+    const shield = Main.screenShield as ScreenShieldLike | null;
     if (shield) {
       this.shield = shield;
       this.shieldId = shield.connect('locked-changed', () => {
-        this.safely('locked-changed', () => this.setReason('lock', shield.locked === true));
+        this.safely('locked-changed', () => this.setReason('lock', shield.locked));
       });
-      // The Shell can be restarted with the shield already up.
-      if (shield.locked === true) this.awayReasons.add('lock');
+      if (shield.locked) this.awayReasons.add('lock');
     }
+
+    // Screen blanking can enter unlock-dialog before screenShield.locked becomes
+    // true. Keep both sources until each has cleared, regardless of signal order.
+    const sessionMode = Main.sessionMode as SessionModeLike;
+    this.sessionMode = sessionMode;
+    this.sessionModeId = sessionMode.connect('updated', () => {
+      this.safely('session-mode updated', () => {
+        this.setReason('session', sessionMode.isLocked);
+      });
+    });
+    if (sessionMode.isLocked) this.awayReasons.add('session');
 
     try {
       const manager = LoginManager.getLoginManager() as unknown as SleepEmitter;
@@ -105,7 +120,9 @@ export class Presence {
 
     if (this.awayReasons.size > 0) {
       this.awaySinceWall = this.clock.wallNow();
-      this.scheduler.wentAway();
+      this.scheduler.wentAway({
+        interruptBreak: this.awayReasons.has('lock') || this.awayReasons.has('session'),
+      });
     }
 
     try {
@@ -122,42 +139,35 @@ export class Presence {
     }
   }
 
-  /** Remove every watch and signal handler. Safe to call twice. */
   disable(): void {
-    this.enabled = false;
     this.removeIdleWatch();
     this.removeActiveWatch();
 
     const shield = this.shield;
     this.shield = null;
     if (shield && this.shieldId !== 0) {
-      try {
-        shield.disconnect(this.shieldId);
-      } catch (err) {
-        this.log('hardbreak: failed to disconnect locked-changed', err);
-      }
+      shield.disconnect(this.shieldId);
     }
     this.shieldId = 0;
+
+    const sessionMode = this.sessionMode;
+    this.sessionMode = null;
+    if (sessionMode && this.sessionModeId !== 0) {
+      sessionMode.disconnect(this.sessionModeId);
+    }
+    this.sessionModeId = 0;
 
     const manager = this.loginManager;
     this.loginManager = null;
     if (manager && this.sleepId !== 0) {
-      try {
-        manager.disconnect(this.sleepId);
-      } catch (err) {
-        this.log('hardbreak: failed to disconnect prepare-for-sleep', err);
-      }
+      manager.disconnect(this.sleepId);
     }
     this.sleepId = 0;
 
     const dnd = this.dndSettings;
     this.dndSettings = null;
     if (dnd && this.dndChangedId !== 0) {
-      try {
-        dnd.disconnect(this.dndChangedId);
-      } catch (err) {
-        this.log('hardbreak: failed to disconnect the DND watch', err);
-      }
+      dnd.disconnect(this.dndChangedId);
     }
     this.dndChangedId = 0;
 
@@ -169,7 +179,7 @@ export class Presence {
   setIdleResetMs(ms: number): void {
     if (ms === this.idleResetMs) return;
     this.idleResetMs = ms;
-    if (this.enabled) this.installIdleWatch();
+    this.installIdleWatch();
   }
 
   // -- idle ------------------------------------------------------------------
@@ -225,11 +235,7 @@ export class Presence {
   private removeWatch(id: number): void {
     const monitor = this.idleMonitor;
     if (!monitor || id === 0) return;
-    try {
-      monitor.remove_watch(id);
-    } catch (err) {
-      this.log('hardbreak: failed to remove an idle-monitor watch', err);
-    }
+    monitor.remove_watch(id);
   }
 
   private onIdle(): void {
@@ -246,7 +252,7 @@ export class Presence {
     if (on) this.awayReasons.add(reason);
     else this.awayReasons.delete(reason);
     const isAway = this.awayReasons.size > 0;
-    // Locking or suspending interrupts a running break; going idle does not.
+    // Locking, blanking or suspending interrupts a running break; going idle does not.
     // This is not conditional on the ∅ → non-empty transition, because by the
     // time the screen locks the idle watch has usually already fired.
     const interrupts = on && reason !== 'idle';

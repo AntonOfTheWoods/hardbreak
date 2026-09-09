@@ -78,7 +78,7 @@ if (importers.length > 0) {
 rmSync(typesJs);
 
 // 4. Copy the non-TypeScript parts of the extension.
-for (const file of ['metadata.json', 'stylesheet.css']) {
+for (const file of ['metadata.json', 'stylesheet.css', 'LICENSE']) {
   const from = join(root, file);
   if (!existsSync(from)) fail(`${file} is missing`);
   cpSync(from, join(dist, file));

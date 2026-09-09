@@ -219,11 +219,14 @@ bun run logs           # journalctl -f -o cat /usr/bin/gnome-shell (the LIVE ses
 ```
 
 `bun run pack` rebuilds, stamps `version-name` into `dist/metadata.json` from the git tag
-(`git describe`, leading `v` stripped — the checked-in `metadata.json` keeps `version: 1`,
-which extensions.gnome.org assigns itself), and then checks the zip it produced: every
+(`git describe`, leading `v` stripped — the numeric `version` is omitted because
+extensions.gnome.org assigns it), and then checks the zip it produced: every
 runtime file must be in it, and nothing test-only may be. CI runs `validate` + `pack` on every push and pull
 request and uploads the zip; a `v*` tag additionally publishes a GitHub release with the
 zip attached and the tag message as the notes (`.github/workflows/`).
+
+The [review notes](docs/extension-review.md) map the runtime and build setup to GNOME's
+extension review and TypeScript guidance.
 
 **Never exercise the overlay on the live session first** — use `bun run devkit`, where a
 bug locks a window rather than the desktop.

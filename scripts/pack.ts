@@ -10,7 +10,7 @@
  *
  * - `gnome-extensions pack`, the canonical tool, whenever it is installed. It
  *   picks up `metadata.json`, `extension.js`, `prefs.js`, `stylesheet.css` and
- *   `schemas/*.gschema.xml` by itself; our JS lives in subdirectories, so those
+ *   `schemas/*.gschema.xml` by itself; our JS directories, assets and licence
  *   are passed as `--extra-source`.
  * - a plain `zip` over the same file list when it is not (CI: `gnome-extensions`
  *   only ships in the `gnome-shell` package, which is a few hundred megabytes of
@@ -23,6 +23,7 @@
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { versionName } from './version-name.js';
 
 const UUID = 'hardbreak@melser.org';
 
@@ -31,11 +32,12 @@ const dist = join(root, 'dist');
 const outDir = join(root, 'tmp', 'pack');
 const zipPath = join(outDir, `${UUID}.shell-extension.zip`);
 
-/** Directories of emitted JS and data that `gnome-extensions pack` ignores. */
-const EXTRA_SOURCES = ['core', 'shell', 'assets'];
+/** Emitted JS, data and licence that `gnome-extensions pack` ignores. */
+const EXTRA_SOURCES = ['core', 'shell', 'assets', 'LICENSE'];
 
-/** Everything the extension needs at runtime. Absent = broken install. */
+/** Runtime files and licence notices required in every distribution. */
 const REQUIRED = [
+  'LICENSE',
   'metadata.json',
   'extension.js',
   'prefs.js',
@@ -93,8 +95,8 @@ function capture(cmd: string[]): string {
 run([process.execPath, 'run', join(root, 'scripts', 'build.ts')]);
 
 // 2. Stamp the human-readable version into the *built* metadata.json.
-//    `version` is an integer that e.g.o assigns and overwrites, so it stays 1 in
-//    the source file; `version-name` (GNOME 45+, <=16 chars of [A-Za-z0-9.-]) is
+//    EGO assigns its own numeric `version`; we omit that deprecated field.
+//    `version-name` (GNOME 45+, <=16 letters/digits/spaces/dots) is
 //    the string users see. Git tags are the only source of truth for it, so it
 //    is derived here and never hand-edited.
 const metadataPath = join(dist, 'metadata.json');
@@ -107,20 +109,11 @@ function git(args: string[]): string | undefined {
   return out.length > 0 ? out : undefined;
 }
 
-/** `v1.0.1` -> `1.0.1`; an untagged commit -> `1.0.0-1-g5f69238`. */
-function versionName(): string | undefined {
-  const described =
-    git(['describe', '--tags', '--exact-match', 'HEAD']) ?? git(['describe', '--tags', '--always']);
-  if (described === undefined) return undefined;
-  return described
-    .replace(/^v/, '')
-    .replace(/[^A-Za-z0-9.-]/g, '-')
-    .slice(0, 16);
-}
-
-const stamped = versionName();
+const described =
+  git(['describe', '--tags', '--exact-match', 'HEAD']) ?? git(['describe', '--tags', '--always']);
+const stamped = described === undefined ? undefined : versionName(described);
 if (stamped === undefined) {
-  console.log('pack: no git description available — packing without version-name');
+  console.log('pack: no valid git display label available — packing without version-name');
 } else {
   const source = JSON.parse(readFileSync(metadataPath, 'utf8')) as Record<string, unknown>;
   source['version-name'] = stamped;
@@ -131,7 +124,6 @@ if (stamped === undefined) {
 // 3. metadata.json is what e.g.o reads first; a mismatch there wastes a review.
 const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as {
   uuid?: string;
-  version?: number;
   'version-name'?: string;
   'shell-version'?: string[];
 };
@@ -140,10 +132,12 @@ if (metadata.uuid !== UUID)
 if (!Array.isArray(metadata['shell-version']) || metadata['shell-version'].length === 0) {
   fail('metadata.json has no shell-version');
 }
-if (typeof metadata.version !== 'number') fail('metadata.json has no numeric version');
+if ('version' in metadata) fail('metadata.json version is assigned by extensions.gnome.org');
 const label = metadata['version-name'];
-if (label !== undefined && !/^[A-Za-z0-9.-]{1,16}$/.test(label)) {
-  fail(`metadata.json version-name ${JSON.stringify(label)} is not <=16 chars of [A-Za-z0-9.-]`);
+if (label !== undefined && !/^(?![. ]+$)[A-Za-z0-9 .]{1,16}$/.test(label)) {
+  fail(
+    `metadata.json version-name ${JSON.stringify(label)} must be 1–16 letters/digits/spaces/dots with at least one letter or digit`,
+  );
 }
 
 for (const name of EXTRA_SOURCES) {

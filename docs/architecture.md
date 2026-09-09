@@ -37,7 +37,7 @@ scripts/install-hooks.ts
 deletes: `types.ts` exports types only, so the emitted module is empty and unreachable from
 `extension.js`/`prefs.js`, which e.g.o rejects (EGO-P-007). The delete is guarded — the build
 fails if that file ever gains a runtime statement or an importer. `scripts/build.ts` then copies
-`metadata.json`, `stylesheet.css`, `assets/`, `schemas/*.xml` into `dist/` and runs
+`metadata.json`, `stylesheet.css`, `LICENSE`, `assets/`, `schemas/*.xml` into `dist/` and runs
 `glib-compile-schemas dist/schemas`. `scripts/install-ext.ts` **copies** `dist/` to
 `~/.local/share/gnome-shell/extensions/hardbreak@melser.org` (staged in a hidden sibling directory,
 then renamed into place), so a rebuild never mutates the tree a running Shell, prefs process or
@@ -208,12 +208,17 @@ export class Watchdog {
 `fire` runs at most once per `arm()`. `BreakController` uses it as follows:
 
 1. `watchdog.arm(durationMs + 30_000)` **before** anything touches the Shell.
-2. Overlay creation, `pushModal`, the 1-s countdown tick, the postpone handler and the
-   teardown are each wrapped in `watchdog.guard(label, …)`.
-3. `onFire` → `forceRelease(reason)`: pop the modal, destroy every overlay actor, disarm —
-   each step in its own try/catch so one failure cannot prevent the others — then
-   `scheduler.abortBreak()`.
-4. Normal end (`endBreak(reason)`) → `disarm()` then the same teardown.
+2. Overlay creation, `pushModal`, the 1-s countdown tick and the postpone/skip handlers
+   run through `watchdog.guard(label, …)`.
+3. `onFire` → `forceRelease(reason)`: stop UI timers, pop the modal, destroy overlay actors,
+   dismiss the warning, disarm, then `scheduler.abortBreak()`.
+4. Normal end (`endBreak(reason)`) uses the same teardown, then `disarm()`.
+
+Routine source removal, signal disconnection and actor destruction use direct calls.
+`Overlay.hide()` retains recovery boundaries around modal/chrome removal so actor destruction
+still runs after a partial-show failure. Teardown does not call `Watchdog.guard`, which would
+re-enter the scheduler mid-transition. High source priority cannot preempt a blocked Shell
+main loop; the watchdog is independent of the countdown, not of the Shell process.
 
 The 30 s margin is a constant (`WATCHDOG_MARGIN_MS`), not a setting (spec §2).
 
@@ -222,14 +227,17 @@ The 30 s margin is a constant (`WATCHDOG_MARGIN_MS`), not a setting (spec §2).
 - **gjsPorts** — `now = GLib.get_monotonic_time()/1000`, `wallNow = Date.now()`,
   `Timers.set = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => { fn(); return GLib.SOURCE_REMOVE })`
   (the watchdog gets its own `Timers` instance using `GLib.PRIORITY_HIGH`), `clear = GLib.Source.remove`.
-- **presence** — one `awayReasons: Set<'idle'|'lock'|'sleep'>` and `awaySinceWall`.
+- **presence** — one `awayReasons: Set<'idle'|'lock'|'session'|'sleep'>` and `awaySinceWall`.
   Idle: `global.backend.get_core_idle_monitor().add_idle_watch(idleResetMs, …)` (re-installed when
   `idle-reset` changes); on fire add `'idle'` with `awaySinceWall = wallNow - idleResetMs`, and
   install a one-shot `add_user_active_watch` that removes `'idle'`. Lock: `Main.screenShield`
-  `locked-changed` → add/remove `'lock'`. Sleep: `LoginManager.getLoginManager()`
+  `locked-changed` → add/remove `'lock'`. Session mode: `Main.sessionMode.updated` →
+  add/remove `'session'` from `isLocked`. This covers blanking in `unlock-dialog` even when
+  `screenShield.locked` remains false. Both reasons are retained until independently cleared.
+  Sleep: `LoginManager.getLoginManager()`
   `prepare-for-sleep(aboutToSuspend)` → add/remove `'sleep'`. Transition ∅→non-empty emits
   `scheduler.wentAway()`; non-empty→∅ emits `scheduler.cameBack(wallNow - awaySinceWall)`.
-  Adding `'lock'` or `'sleep'` additionally emits `scheduler.wentAway({ interruptBreak: true })`
+  Adding `'lock'`, `'session'` or `'sleep'` additionally emits `scheduler.wentAway({ interruptBreak: true })`
   whether or not it is the ∅→non-empty transition. Re-installing the idle watch replaces
   *only* the idle watch: the one-shot user-active watch is all that can clear `'idle'`
   again, so it is left alone (and installed if `'idle'` is set and it is missing).
@@ -237,8 +245,11 @@ The 30 s margin is a constant (`WATCHDOG_MARGIN_MS`), not a setting (spec §2).
   `scheduler.setDnd(!showBanners)` on connect and on change.
 - **notifier** — `MessageTray.getSystemSource()` + `new MessageTray.Notification({source, title,
   body, isTransient: true})`; keep the reference and `destroy()` it when the break starts.
-  Also `postNotice(title, body, log)`: a non-transient `Urgency.CRITICAL` notification that
-  nothing holds a reference to, used once for the first-run notice.
+  Also `postNotice(title, body)`: an owned non-transient `Urgency.CRITICAL` notification,
+  used once for the first-run notice. The extension owns a separate `Notifier` for this
+  notice and destroys it on disable. Tray-side destruction clears either reference;
+  the shared system source is never destroyed by the extension. Failed posting cleans up
+  the notification and leaves `first-run-done` false so a later enable can retry.
 - **overlay** — a reactive `St.Widget` group sized to `global.stage`, added with
   `Main.layoutManager.addTopChrome(group)` (no params — Shell 50 only accepts `trackFullscreen`/`affectsStruts`); one child per
   `Main.layoutManager.monitors` entry (`x, y, width, height`) with inline style
@@ -260,11 +271,13 @@ The 30 s margin is a constant (`WATCHDOG_MARGIN_MS`), not a setting (spec §2).
   `GLib.timeout_add_seconds`, guarded. The postpone button is hidden when the window elapses
   or after use, and is **mouse only** by construction: the group owns key focus under the
   modal grab and swallows every key event, so it carries no `can_focus` and no focus style.
-  `startBreak` refuses to raise the wall while `Main.screenShield.locked` — it is top
+  `startBreak` refuses to raise the wall while `Main.screenShield.locked` or
+  `Main.sessionMode.isLocked` — it is top
   chrome, so it would cover the unlock dialog.
 - **breakController** — implements `SchedulerEffects`; owns overlay, watchdog, sound
-  (`global.display.get_sound_player().play_from_file(Gio.File.new_for_path(p), 'Break over', null)`
-  on `'completed'` only — a skipped break plays nothing) and the idea pick. `BreakContext`
+  (`global.display.get_sound_player().play_from_file(...)` with an owned cancellable,
+  on `'completed'` only — a skipped break plays nothing) and the idea pick. Disable,
+  replacement playback and playback failures cancel the sound request. `BreakContext`
   carries `strict`; `startBreak` passes `context.strict ? null : () => this.onSkip()`, where
   `onSkip` is `watchdog.guard('skip', () => scheduler.skip()) === true`, the same shape as
   postpone. `BreakSchedulerTarget` is therefore `postpone` + `skip` + `abortBreak`.
@@ -293,7 +306,7 @@ The 30 s margin is a constant (`WATCHDOG_MARGIN_MS`), not a setting (spec §2).
   loop (EGO-X-004) — so `ideas` starts empty and is filled when the read lands; the callback
   does nothing if it fires after teardown. `disable()`: reverse order;
   `controller.forceRelease('disable')` if a break is running; disconnect every signal; cancel
-  the idea-book read; null every field (GNOME review rules).
+  the idea-book read; destroy the first-run notifier; null every field (GNOME review rules).
 - **prefs.ts** — first group is **Enforcement**, an `Adw.SwitchRow` bound to `strict`; its
   subtitle says the change applies from the next break and repeats the Ctrl+Alt+F3 recovery,
   because this is the switch that removes every other way out of a running break. The
@@ -307,12 +320,12 @@ The 30 s margin is a constant (`WATCHDOG_MARGIN_MS`), not a setting (spec §2).
 |---|---|
 | `format` / `format:write` | `oxfmt --check .` / `oxfmt .` |
 | `lint` / `lint:fix` | `oxlint` / `oxlint --fix` |
-| `typecheck` | `tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.build.json` |
+| `typecheck` | `tsc --noEmit -p tsconfig.tooling.json && tsc --noEmit -p tsconfig.build.json && tsc -p tsconfig.shell-tests.json` |
 | `test` | `bun test` |
 | `check` | typecheck + lint + test |
 | `validate` | format + check (pre-commit hook, installed by `prepare`) |
 | `build` | `bun run scripts/build.ts` — tsc, drop the unreachable `core/types.js`, copy assets/schema, `glib-compile-schemas` |
-| `pack` | `bun run scripts/pack.ts` — build, stamp `version-name` into `dist/metadata.json` from `git describe` (exact tag → `1.0.1`, otherwise `1.0.0-3-g5f69238`; leading `v` stripped, sanitised to `[A-Za-z0-9.-]`, ≤16 chars — the source `metadata.json` keeps `version: 1`, which e.g.o overwrites), then `gnome-extensions pack` (or a plain `zip` where that tool is absent) into `tmp/pack/`, then verify the bundle against an explicit required/forbidden file list (`core/types.js` is on the forbidden side) |
+| `pack` | `bun run scripts/pack.ts` — build, stamp `version-name` into `dist/metadata.json` from `git describe` (exact tag → `1.0.1`, otherwise `1.0.0.3.g5f69238`; leading `v` stripped, sanitised to `[A-Za-z0-9 .]`, ≤16 chars, at least one letter or digit — numeric `version` is omitted for EGO to assign), then `gnome-extensions pack` (or a plain `zip` where that tool is absent) into `tmp/pack/`, then verify the bundle against an explicit required/forbidden file list (`core/types.js` is on the forbidden side) |
 | `install:ext` / `uninstall:ext` | copy `dist/` into / remove `~/.local/share/gnome-shell/extensions/hardbreak@melser.org` (`scripts/install-common.ts`: stage as a hidden sibling, `rename(2)` into place; an old-style symlink is unlinked, a directory is replaced only if its `metadata.json` carries our uuid) |
 | `devkit` | `dbus-run-session -- gnome-shell --devkit`, after installing `dist/` (the preflight *is* `install:ext`, so the nested Shell runs the current build) |
 | `logs` | `journalctl -f -o cat /usr/bin/gnome-shell` |
@@ -324,7 +337,10 @@ CI (`.github/workflows/`): `ci.yml` runs `validate` + `pack` on pushes to `devel
 pull requests and uploads the zip; `release.yml` does the same on a `v*` tag and attaches the zip
 to a GitHub release with the tag message as the notes.
 
-Two tsconfigs: `tsconfig.json` covers `src/core/**` including tests with `types: ["bun"]`;
-`tsconfig.build.json` covers `src/**` minus tests with `types: []` and the `@girs` ambient
-imports, `rootDir: src`, `outDir: dist`, `target/module: ESNext`, `moduleResolution: Bundler`,
-`verbatimModuleSyntax`, `strict`.
+The root `tsconfig.json` is a solution configuration referencing the three projects so
+editors can discover them. `tsconfig.tooling.json` covers `src/core/**` including tests and
+`scripts/**` with Bun types. `tsconfig.build.json` covers runtime `src/**` minus tests with
+`types: []` and the `@girs` ambient imports, `rootDir: src`, `outDir: dist`, `target: ESNext`,
+`module/moduleResolution: NodeNext`, `verbatimModuleSyntax`, `strict` and `noEmitOnError`.
+`tsconfig.shell-tests.json` adds Bun types for the mocked Shell adapter tests without
+emitting anything. `typecheck` checks each project explicitly; it does not use `tsc --build`.

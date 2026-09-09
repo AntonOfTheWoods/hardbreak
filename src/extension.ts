@@ -14,7 +14,7 @@ import type { IdeaBook, Log } from './core/types.js';
 import { BreakController, type BreakContext } from './shell/breakController.js';
 import { createClock, createLog, createTimers } from './shell/gjsPorts.js';
 import { Indicator } from './shell/indicator.js';
-import { postNotice } from './shell/notifier.js';
+import { Notifier } from './shell/notifier.js';
 import { Presence } from './shell/presence.js';
 import {
   readOverlayStyle,
@@ -32,6 +32,7 @@ export default class HardbreakExtension extends Extension {
   private controller: BreakController | null = null;
   private presence: Presence | null = null;
   private indicator: Indicator | null = null;
+  private firstRunNotifier: Notifier | null = null;
   private ideas: IdeaBook = emptyIdeas();
   private ideasCancellable: Gio.Cancellable | null = null;
 
@@ -54,48 +55,46 @@ export default class HardbreakExtension extends Extension {
     // cycle, a lock during a break interrupts it), which is impossible if GNOME
     // calls disable() on every lock. On the lock screen the panel indicator hides
     // itself and no break can start (presence marks the session away; the
-    // controller refuses to show the overlay while `Main.screenShield.locked`).
+    // controller also refuses overlays in the `unlock-dialog` session mode).
     // disable() below still tears down everything unconditionally.
-    const log = this.log;
-
     // First and foremost: if the wall is up, take it down. This has to happen
     // before `scheduler.stop()`, because the abort it triggers re-arms the
     // countdown — and `stop()` is what clears those sources again.
     const controller = this.controller;
     if (controller?.breakRunning) {
-      safely(log, 'force release on disable', () => controller.forceRelease('disable'));
+      controller.forceRelease('disable');
     }
 
     const presence = this.presence;
     this.presence = null;
-    if (presence) safely(log, 'disabling presence', () => presence.disable());
+    presence?.disable();
 
     const scheduler = this.scheduler;
     this.scheduler = null;
-    // Drops every GLib source the scheduler owns.
-    if (scheduler) safely(log, 'stopping the scheduler', () => scheduler.stop());
+    scheduler?.stop();
 
     const indicator = this.indicator;
     this.indicator = null;
-    if (indicator) safely(log, 'destroying the indicator', () => indicator.destroy());
+    indicator?.destroy();
 
     this.controller = null;
-    if (controller) safely(log, 'destroying the break controller', () => controller.destroy());
+    controller?.destroy();
+
+    this.firstRunNotifier?.destroy();
+    this.firstRunNotifier = null;
 
     const settings = this.settings;
     const settingsChangedId = this.settingsChangedId;
     this.settings = null;
     this.settingsChangedId = 0;
     if (settings && settingsChangedId !== 0) {
-      safely(log, 'disconnecting the settings watch', () => settings.disconnect(settingsChangedId));
+      settings.disconnect(settingsChangedId);
     }
 
     // An idea-book read may still be in flight; its callback checks the token.
     const ideasCancellable = this.ideasCancellable;
     this.ideasCancellable = null;
-    if (ideasCancellable) {
-      safely(log, 'cancelling the idea-book read', () => ideasCancellable.cancel());
-    }
+    ideasCancellable?.cancel();
 
     this.ideas = emptyIdeas();
     this.log = () => {};
@@ -156,7 +155,9 @@ export default class HardbreakExtension extends Extension {
     scheduler.setEnabled(settings.get_boolean('breaks-enabled'));
     presence.enable();
     scheduler.start();
-    this.showFirstRunNotice(settings);
+    const notifier = new Notifier(log);
+    this.firstRunNotifier = notifier;
+    this.showFirstRunNotice(settings, notifier);
   }
 
   /**
@@ -172,11 +173,11 @@ export default class HardbreakExtension extends Extension {
    * Failing here costs the notice and nothing else — `enable()` must not fall
    * over because the message tray was unhappy.
    */
-  private showFirstRunNotice(settings: Gio.Settings): void {
+  private showFirstRunNotice(settings: Gio.Settings, notifier: Notifier): void {
     try {
       if (settings.get_boolean('first-run-done')) return;
       const strict = readStrict(settings);
-      postNotice(
+      const posted = notifier.postNotice(
         'hardbreak is on',
         strict
           ? 'Breaks are undismissable: no skip, no escape key. Pause or switch breaks off from ' +
@@ -185,9 +186,8 @@ export default class HardbreakExtension extends Extension {
           : 'Breaks cover every screen until the countdown ends. The Skip button or Escape ends ' +
               'one early; turn on Strict mode in the settings to remove them. Pause or switch ' +
               'breaks off from the alarm icon in the top bar.',
-        this.log,
       );
-      settings.set_boolean('first-run-done', true);
+      if (posted) settings.set_boolean('first-run-done', true);
     } catch (err) {
       this.log('hardbreak: could not show the first-run notice', err);
     }
@@ -249,12 +249,4 @@ export default class HardbreakExtension extends Extension {
 /** A book with no ideas at all; `pickIdea` then uses its built-in fallback. */
 function emptyIdeas(): IdeaBook {
   return { mini: [], long: [] };
-}
-
-function safely(log: Log, label: string, fn: () => void): void {
-  try {
-    fn();
-  } catch (err) {
-    log(`hardbreak: ${label} failed`, err);
-  }
 }

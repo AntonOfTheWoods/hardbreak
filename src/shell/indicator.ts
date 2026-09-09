@@ -115,11 +115,9 @@ export class Indicator {
 
     Main.panel.addToStatusArea('hardbreak', button);
 
-    const sessionMode = Main.sessionMode as SessionModeLike | null | undefined;
-    if (sessionMode) {
-      this.sessionMode = sessionMode;
-      this.sessionModeId = sessionMode.connect('updated', () => this.syncVisibility());
-    }
+    const sessionMode = Main.sessionMode as SessionModeLike;
+    this.sessionMode = sessionMode;
+    this.sessionModeId = sessionMode.connect('updated', () => this.syncVisibility());
     // `addToStatusArea` shows the container, so this has to come after it.
     this.syncVisibility();
 
@@ -132,12 +130,8 @@ export class Indicator {
     const icon = this.icon;
     if (!icon) return;
     const counting = snapshot.mode === 'countdown' || snapshot.mode === 'warning';
-    try {
-      if (counting) icon.remove_style_class_name(DIM_CLASS);
-      else icon.add_style_class_name(DIM_CLASS);
-    } catch (err) {
-      this.log('hardbreak: could not restyle the panel icon', err);
-    }
+    if (counting) icon.remove_style_class_name(DIM_CLASS);
+    else icon.add_style_class_name(DIM_CLASS);
   }
 
   destroy(): void {
@@ -147,41 +141,23 @@ export class Indicator {
     const sessionMode = this.sessionMode;
     this.sessionMode = null;
     if (sessionMode && this.sessionModeId !== 0) {
-      try {
-        sessionMode.disconnect(this.sessionModeId);
-      } catch (err) {
-        this.log('hardbreak: could not disconnect the session-mode watch', err);
-      }
+      sessionMode.disconnect(this.sessionModeId);
     }
     this.sessionModeId = 0;
 
     if (this.settingsChangedId !== 0) {
-      try {
-        this.settings.disconnect(this.settingsChangedId);
-      } catch (err) {
-        this.log('hardbreak: could not disconnect the breaks-enabled watch', err);
-      }
+      this.settings.disconnect(this.settingsChangedId);
       this.settingsChangedId = 0;
     }
 
-    // Destroying the button destroys the menu and its items, which drops these
-    // handlers anyway; disconnecting explicitly keeps the teardown auditable.
     const switchItem = this.switchItem;
     if (switchItem && this.toggledId !== 0) {
-      try {
-        switchItem.disconnect(this.toggledId);
-      } catch (err) {
-        this.log('hardbreak: could not disconnect the Breaks switch', err);
-      }
+      switchItem.disconnect(this.toggledId);
     }
     this.toggledId = 0;
 
     if (button && this.openStateId !== 0) {
-      try {
-        (button.menu as PopupMenu.PopupMenu).disconnect(this.openStateId);
-      } catch (err) {
-        this.log('hardbreak: could not disconnect open-state-changed', err);
-      }
+      (button.menu as PopupMenu.PopupMenu).disconnect(this.openStateId);
     }
     this.openStateId = 0;
 
@@ -190,12 +166,7 @@ export class Indicator {
     this.icon = null;
     this.snapshot = null;
 
-    if (!button) return;
-    try {
-      button.destroy();
-    } catch (err) {
-      this.log('hardbreak: destroying the panel button failed', err);
-    }
+    button?.destroy();
   }
 
   // -- internals -------------------------------------------------------------
@@ -209,11 +180,7 @@ export class Indicator {
   private syncVisibility(): void {
     const button = this.button;
     if (!button) return;
-    try {
-      button.container.visible = this.sessionMode?.isLocked !== true;
-    } catch (err) {
-      this.log('hardbreak: could not update the panel button visibility', err);
-    }
+    button.container.visible = this.sessionMode?.isLocked !== true;
   }
 
   private addAction(menu: PopupMenu.PopupMenu, label: string, action: () => void): void {
@@ -234,8 +201,6 @@ export class Indicator {
     this.syncing = true;
     try {
       item.setToggleState(this.settings.get_boolean('breaks-enabled'));
-    } catch (err) {
-      this.log('hardbreak: could not sync the Breaks switch', err);
     } finally {
       this.syncing = false;
     }
@@ -244,11 +209,7 @@ export class Indicator {
   private refreshStatus(): void {
     const item = this.statusItem;
     if (!item) return;
-    try {
-      item.label.text = this.statusText();
-    } catch (err) {
-      this.log('hardbreak: could not update the status line', err);
-    }
+    item.label.text = this.statusText();
   }
 
   private statusText(): string {

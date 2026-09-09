@@ -36,6 +36,10 @@ interface ScreenShieldLike {
   readonly locked: boolean;
 }
 
+interface SessionModeLike {
+  readonly isLocked: boolean;
+}
+
 /** Everything read fresh from `Gio.Settings` (and the idea file) at break time. */
 export interface BreakContext {
   schedule: ScheduleSettings;
@@ -61,6 +65,7 @@ export class BreakController implements SchedulerEffects {
 
   private scheduler: BreakSchedulerTarget | null = null;
   private stateListener: ((snapshot: Snapshot) => void) | null = null;
+  private soundCancellable: Gio.Cancellable | null = null;
 
   private tickId = 0;
   private postponeHideId = 0;
@@ -70,7 +75,7 @@ export class BreakController implements SchedulerEffects {
   constructor(
     private readonly readContext: () => BreakContext,
     private readonly clock: Clock,
-    /** High-priority timers: a busy main loop must not delay the release. */
+    /** Prioritizes release among ready sources; cannot preempt a blocked main loop. */
     watchdogTimers: Timers,
     private readonly log: Log,
   ) {
@@ -117,8 +122,10 @@ export class BreakController implements SchedulerEffects {
       // The wall is top chrome, so it would paint over the unlock dialog and
       // grab the keyboard the user needs for their password. Throwing here is
       // the wanted exit: the guard releases and the scheduler aborts the break.
-      const shield = Main.screenShield as ScreenShieldLike | null | undefined;
-      if (shield?.locked === true) throw new Error('screen is locked');
+      const shield = Main.screenShield as ScreenShieldLike | null;
+      const sessionMode = Main.sessionMode as SessionModeLike;
+      // Blanking can enter unlock-dialog without requiring a password.
+      if (shield?.locked || sessionMode.isLocked) throw new Error('screen is locked or blanked');
 
       this.notifier.dismiss();
       const context = this.readContext();
@@ -163,39 +170,13 @@ export class BreakController implements SchedulerEffects {
   // -- release ---------------------------------------------------------------
 
   /**
-   * The safety net (architecture §4 step 3). Each step is isolated so that one
-   * failure cannot prevent the others, and every one of them is harmless when
-   * nothing is on screen — the watchdog also fires for exceptions raised after
-   * the overlay has already gone (a postpone handler, say).
+   * The watchdog can also fire after the overlay has gone, for example when
+   * a postpone callback fails. Teardown therefore tolerates absent resources.
    */
   forceRelease(reason: string): void {
     this.log(`hardbreak: force release (${reason})`);
-    try {
-      this.stopTick();
-    } catch (err) {
-      this.log('hardbreak: force release could not stop the countdown tick', err);
-    }
-    try {
-      this.stopPostponeHide();
-    } catch (err) {
-      this.log('hardbreak: force release could not stop the postpone timer', err);
-    }
-    try {
-      // Pops the modal and destroys the actors, each in its own try/catch.
-      this.overlay.hide();
-    } catch (err) {
-      this.log('hardbreak: force release could not hide the overlay', err);
-    }
-    try {
-      this.notifier.dismiss();
-    } catch (err) {
-      this.log('hardbreak: force release could not dismiss the notification', err);
-    }
-    try {
-      this.watchdog.disarm();
-    } catch (err) {
-      this.log('hardbreak: force release could not disarm the watchdog', err);
-    }
+    this.teardown();
+    this.watchdog.disarm();
     const scheduler = this.scheduler;
     if (!scheduler) return;
     try {
@@ -213,36 +194,20 @@ export class BreakController implements SchedulerEffects {
     this.watchdog.disarm();
     this.teardown();
     this.notifier.destroy();
+    this.stopEndSound();
   }
 
   // -- internals -------------------------------------------------------------
 
   /**
-   * Idempotent, and deliberately not wrapped in `Watchdog.guard`: every step
-   * already isolates its own failure, and firing the watchdog from inside
-   * `endBreak('completed')` would re-enter the scheduler mid-transition.
+   * Do not call Watchdog.guard here: firing it during endBreak would re-enter
+   * the scheduler mid-transition. Overlay.hide handles modal recovery itself.
    */
   private teardown(): void {
-    try {
-      this.stopTick();
-    } catch (err) {
-      this.log('hardbreak: could not stop the countdown tick', err);
-    }
-    try {
-      this.stopPostponeHide();
-    } catch (err) {
-      this.log('hardbreak: could not stop the postpone timer', err);
-    }
-    try {
-      this.overlay.hide();
-    } catch (err) {
-      this.log('hardbreak: could not hide the overlay', err);
-    }
-    try {
-      this.notifier.dismiss();
-    } catch (err) {
-      this.log('hardbreak: could not dismiss the warning notification', err);
-    }
+    this.stopTick();
+    this.stopPostponeHide();
+    this.overlay.hide();
+    this.notifier.dismiss();
   }
 
   /**
@@ -288,11 +253,7 @@ export class BreakController implements SchedulerEffects {
     const id = this.tickId;
     this.tickId = 0;
     if (id === 0) return;
-    try {
-      GLib.Source.remove(id);
-    } catch (err) {
-      this.log('hardbreak: failed to remove the countdown tick', err);
-    }
+    GLib.Source.remove(id);
   }
 
   /** The postpone button only exists for the first `postponeWindowMs`. */
@@ -312,23 +273,27 @@ export class BreakController implements SchedulerEffects {
     const id = this.postponeHideId;
     this.postponeHideId = 0;
     if (id === 0) return;
-    try {
-      GLib.Source.remove(id);
-    } catch (err) {
-      this.log('hardbreak: failed to remove the postpone-window timer', err);
-    }
+    GLib.Source.remove(id);
   }
 
   /** Never throws out: a missing sound file must not abort anything. */
   private playEndSound(): void {
+    this.stopEndSound();
     try {
       const { endSound } = this.readContext();
       if (endSound === null) return;
+      this.soundCancellable = new Gio.Cancellable();
       global.display
         .get_sound_player()
-        .play_from_file(Gio.File.new_for_path(endSound), 'Break over', null);
+        .play_from_file(Gio.File.new_for_path(endSound), 'Break over', this.soundCancellable);
     } catch (err) {
+      this.stopEndSound();
       this.log('hardbreak: could not play the end-of-break sound', err);
     }
+  }
+
+  private stopEndSound(): void {
+    this.soundCancellable?.cancel();
+    this.soundCancellable = null;
   }
 }

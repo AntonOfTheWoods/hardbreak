@@ -21,7 +21,8 @@ export function createClock(): Clock {
 
 /**
  * One-shot GLib timeouts. The watchdog gets its own instance at
- * `GLib.PRIORITY_HIGH` so a busy main loop cannot delay the hard release.
+ * `GLib.PRIORITY_HIGH` to run before other ready sources. It cannot preempt a
+ * blocked main loop.
  *
  * A callback that throws is logged rather than allowed to escape into the main
  * loop: GJS would report it and the source's return value would be lost, which

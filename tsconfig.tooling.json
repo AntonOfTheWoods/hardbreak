@@ -1,15 +1,13 @@
 {
   "compilerOptions": {
     "target": "ESNext",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
     "lib": ["ESNext"],
-    "types": [],
+    "types": ["bun"],
     "verbatimModuleSyntax": true,
-    "rootDir": "src",
-    "outDir": "dist",
+    "noEmit": true,
     "strict": true,
-    "noEmitOnError": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
     "noImplicitReturns": true,
@@ -19,10 +17,7 @@
     "exactOptionalPropertyTypes": true,
     "isolatedModules": true,
     "forceConsistentCasingInFileNames": true,
-    "skipLibCheck": true,
-    "declaration": false,
-    "sourceMap": false
+    "skipLibCheck": true
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.test.ts", "src/core/testing.ts"]
+  "include": ["src/core/**/*.ts", "scripts/**/*.ts"]
 }

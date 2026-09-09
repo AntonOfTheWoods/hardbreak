@@ -1,10 +1,9 @@
 {
   "uuid": "hardbreak@melser.org",
   "name": "hardbreak",
-  "description": "Enforced screen breaks: an undismissable full-screen overlay on every monitor. Zero-process replacement for Stretchly.",
+  "description": "Screen breaks on every monitor, with a countdown and stretch ideas. Skip breaks by default, or enable Strict mode to enforce them. Pause from the panel menu or with Do Not Disturb.",
   "shell-version": ["50"],
   "session-modes": ["user", "unlock-dialog"],
   "settings-schema": "org.gnome.shell.extensions.hardbreak",
-  "url": "https://github.com/AntonOfTheWoods/hardbreak",
-  "version": 1
+  "url": "https://github.com/AntonOfTheWoods/hardbreak"
 }

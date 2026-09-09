@@ -10,7 +10,7 @@
     "format:write": "oxfmt .",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.tooling.json && tsc --noEmit -p tsconfig.build.json && tsc -p tsconfig.shell-tests.json",
     "test": "bun test",
     "check": "bun run typecheck && bun run lint && bun run test",
     "validate": "bun run format && bun run check",

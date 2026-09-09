@@ -110,6 +110,11 @@ keybinding block are identical in both modes.
     and puts the same break back up, and a return after `idle-reset` or more counts as
     the break and starts a fresh cycle. Going idle, by contrast, never interrupts a
     break: being idle is exactly what the wall makes you.
+  - *Review correction, 2026-09-09:* also observe `Main.sessionMode.updated` and
+    `isLocked`: GNOME can enter `unlock-dialog` during screen blanking without
+    setting `screenShield.locked`. Entering that mode interrupts a break and removes
+    its keyboard handlers. No new break starts there; independent lock and session
+    reasons must both clear before resuming.
 - **DND** (Q9a): `org.gnome.desktop.notifications` `show-banners` = false → **full
   pause**, no breaks at all; when it comes back on, fresh cycle. This is the classroom
   guard: one Quick Settings toggle before teaching on a projector. Explicitly *not*
