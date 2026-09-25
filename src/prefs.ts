@@ -9,6 +9,10 @@ import Gio from 'gi://Gio';
 import Gtk from 'gi://Gtk';
 import { ExtensionPreferences } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
+import { calendarChoices, type CalendarChoice } from './shell/calendar.js';
+import { loadEdsBindings } from './shell/eds.js';
+import { readSourceRecords } from './shell/edsSources.js';
+
 const BUNDLED_SOUND = 'crystal-glass.wav';
 const FALLBACK_COLOR = '#633738';
 
@@ -29,6 +33,7 @@ export default class HardbreakPreferences extends ExtensionPreferences {
 
     page.add(buildEnforcement(settings));
     page.add(buildSchedule(settings));
+    page.add(buildCalendar(settings, window));
     page.add(buildBreak(settings, 'mini'));
     page.add(buildBreak(settings, 'long'));
     page.add(buildPostpone(settings));
@@ -114,6 +119,103 @@ function buildSchedule(settings: Gio.Settings): Adw.PreferencesGroup {
     }),
   );
   return group;
+}
+
+/**
+ * Calendar pause (ADR 0001): one switch per calendar known to Evolution Data
+ * Server, each adding or removing its source uid in `watched-calendars`.
+ *
+ * The calendars are read asynchronously from EDS's registry service over
+ * D-Bus rather than through `EDataServer.SourceRegistry`, whose disposal spins
+ * the main context while GJS tears the process down and crashes it (see
+ * `shell/edsSources.ts`). The introspection data is still loaded, to say what to
+ * install when the Shell side could not use it. Uids already in the setting
+ * that match no calendar here (a removed account, another machine) are kept.
+ */
+function buildCalendar(
+  settings: Gio.Settings,
+  window: Adw.PreferencesWindow,
+): Adw.PreferencesGroup {
+  const group = new Adw.PreferencesGroup({
+    title: 'Calendar',
+    description: 'Timed events in watched calendars pause breaks. All-day events never do.',
+  });
+  const placeholder = new Adw.ActionRow({ title: 'Loading calendars…' });
+  placeholder.add_suffix(new Adw.Spinner({ valign: Gtk.Align.CENTER }));
+  group.add(placeholder);
+
+  const cancellable = new Gio.Cancellable();
+  const rows = new Map<string, Adw.SwitchRow>();
+  const changedId = settings.connect('changed::watched-calendars', () => {
+    const watched = settings.get_strv('watched-calendars');
+    for (const [uid, row] of rows) {
+      const active = watched.includes(uid);
+      if (row.active !== active) row.active = active;
+    }
+  });
+  window.connect('close-request', () => {
+    cancellable.cancel();
+    settings.disconnect(changedId);
+    return false;
+  });
+
+  const replacePlaceholder = (title: string): void => {
+    if (cancellable.is_cancelled()) return;
+    group.remove(placeholder);
+    group.add(new Adw.ActionRow({ title, activatable: false }));
+  };
+
+  const showCalendars = (calendars: readonly CalendarChoice[]): void => {
+    if (cancellable.is_cancelled()) return;
+    if (calendars.length === 0) {
+      replacePlaceholder('No calendars found (add an online account in Settings)');
+      return;
+    }
+    group.remove(placeholder);
+    const watched = settings.get_strv('watched-calendars');
+    for (const calendar of calendars) {
+      const row = new Adw.SwitchRow({
+        title: calendar.name,
+        subtitle: calendar.account,
+        active: watched.includes(calendar.uid),
+      });
+      row.connect('notify::active', () => {
+        setWatched(settings, calendar.uid, row.active);
+      });
+      rows.set(calendar.uid, row);
+      group.add(row);
+    }
+  };
+
+  loadEdsBindings().then(
+    () => {
+      if (cancellable.is_cancelled()) return;
+      readSourceRecords(cancellable).then(
+        (records) => showCalendars(calendarChoices(records)),
+        (err: unknown) => {
+          if (cancellable.is_cancelled()) return;
+          console.warn(`hardbreak: could not read the calendars (${String(err)})`);
+          replacePlaceholder('Could not reach Evolution Data Server');
+        },
+      );
+    },
+    (err: unknown) => {
+      console.debug(`hardbreak: calendar bindings unavailable (${String(err)})`);
+      replacePlaceholder('Needs gir1.2-ecal-2.0, gir1.2-edataserver-1.2 and gir1.2-ical-3.0');
+    },
+  );
+  return group;
+}
+
+/** Add or remove one uid; every other entry, known here or not, is kept. */
+function setWatched(settings: Gio.Settings, uid: string, watched: boolean): void {
+  const current = settings.get_strv('watched-calendars');
+  const next = watched
+    ? current.includes(uid)
+      ? current
+      : [...current, uid]
+    : current.filter((entry) => entry !== uid);
+  if (next.length !== current.length) settings.set_strv('watched-calendars', next);
 }
 
 function buildBreak(settings: Gio.Settings, kind: 'mini' | 'long'): Adw.PreferencesGroup {

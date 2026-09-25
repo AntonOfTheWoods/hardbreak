@@ -12,7 +12,9 @@ import { parseIdeaBook } from './core/ideas.js';
 import { Scheduler } from './core/scheduler.js';
 import type { IdeaBook, Log } from './core/types.js';
 import { BreakController, type BreakContext } from './shell/breakController.js';
-import { createClock, createLog, createTimers } from './shell/gjsPorts.js';
+import { CalendarWatcher } from './shell/calendar.js';
+import { loadEdsBackend } from './shell/eds.js';
+import { createClock, createLog, createTimers, createWarn } from './shell/gjsPorts.js';
 import { Indicator } from './shell/indicator.js';
 import { Notifier } from './shell/notifier.js';
 import { Presence } from './shell/presence.js';
@@ -31,6 +33,7 @@ export default class HardbreakExtension extends Extension {
   private scheduler: Scheduler | null = null;
   private controller: BreakController | null = null;
   private presence: Presence | null = null;
+  private calendar: CalendarWatcher | null = null;
   private indicator: Indicator | null = null;
   private firstRunNotifier: Notifier | null = null;
   private ideas: IdeaBook = emptyIdeas();
@@ -68,6 +71,12 @@ export default class HardbreakExtension extends Extension {
     const presence = this.presence;
     this.presence = null;
     presence?.disable();
+
+    // Cancels every EDS call in flight and drops its signals and timers, so
+    // nothing reaches the scheduler once it has stopped.
+    const calendar = this.calendar;
+    this.calendar = null;
+    calendar?.disable();
 
     const scheduler = this.scheduler;
     this.scheduler = null;
@@ -140,7 +149,35 @@ export default class HardbreakExtension extends Extension {
     this.scheduler = scheduler;
     controller.setScheduler(scheduler);
 
-    const presence = new Presence(scheduler, schedule.idleResetMs, clock, log);
+    // Calendar pause (ADR 0001). Nothing is loaded from EDS until a calendar
+    // is watched, and a missing EDS leaves it inert rather than failing here.
+    const warn = createWarn();
+    const calendar = new CalendarWatcher(
+      scheduler,
+      clock,
+      createTimers(GLib.PRIORITY_DEFAULT, log),
+      log,
+      () => loadEdsBackend(warn),
+      warn,
+    );
+    this.calendar = calendar;
+
+    // Coming back from an absence moves the calendar window on first: a
+    // suspend can outlast it. The re-read is asynchronous; the scheduler
+    // re-reads its gate from wall time in the meantime.
+    const presence = new Presence(
+      {
+        wentAway: (options) => scheduler.wentAway(options),
+        cameBack: (awayMs) => {
+          calendar.refresh();
+          scheduler.cameBack(awayMs);
+        },
+        setDnd: (on) => scheduler.setDnd(on),
+      },
+      schedule.idleResetMs,
+      clock,
+      log,
+    );
     this.presence = presence;
 
     const indicator = new Indicator(scheduler, settings, clock, log);
@@ -155,6 +192,7 @@ export default class HardbreakExtension extends Extension {
     scheduler.setEnabled(settings.get_boolean('breaks-enabled'));
     presence.enable();
     scheduler.start();
+    calendar.enable(settings.get_strv('watched-calendars'));
     const notifier = new Notifier(log);
     this.firstRunNotifier = notifier;
     this.showFirstRunNotice(settings, notifier);
@@ -193,7 +231,10 @@ export default class HardbreakExtension extends Extension {
     }
   }
 
-  /** Settings fan-out. The scheduler owns re-planning; presence owns the watch. */
+  /**
+   * Settings fan-out. The scheduler owns re-planning; presence owns the idle
+   * watch; the calendar watcher owns which calendars are open.
+   */
   private onSettingChanged(key: string): void {
     const settings = this.settings;
     const scheduler = this.scheduler;
@@ -201,6 +242,10 @@ export default class HardbreakExtension extends Extension {
     try {
       if (key === 'breaks-enabled') {
         scheduler.setEnabled(settings.get_boolean(key));
+        return;
+      }
+      if (key === 'watched-calendars') {
+        this.calendar?.setWatched(settings.get_strv(key));
         return;
       }
       if (!SCHEDULE_KEYS.includes(key)) return;

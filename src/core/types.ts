@@ -9,7 +9,10 @@
 export interface Clock {
   /** Monotonic milliseconds. Stops during suspend, exactly like GLib timeouts. */
   now(): number;
-  /** Epoch milliseconds. Only used for "pause until tomorrow" and away durations. */
+  /**
+   * Epoch milliseconds. Only used for "pause until tomorrow", away durations
+   * and busy events from the watched calendars.
+   */
   wallNow(): number;
 }
 
@@ -50,7 +53,19 @@ export interface SchedulerEffects {
   stateChanged(snapshot: Snapshot): void;
 }
 
-export type Mode = 'disabled' | 'dnd' | 'away' | 'paused' | 'countdown' | 'warning' | 'break';
+/**
+ * What the scheduler is doing. Gates win over the phase, in this order:
+ * disabled, dnd, calendar, away, paused.
+ */
+export type Mode =
+  | 'disabled'
+  | 'dnd'
+  | 'calendar'
+  | 'away'
+  | 'paused'
+  | 'countdown'
+  | 'warning'
+  | 'break';
 
 export interface Snapshot {
   mode: Mode;
@@ -61,6 +76,16 @@ export interface Snapshot {
   /** Epoch milliseconds a pause runs until, or `null` when not paused. */
   pausedUntilWall: number | null;
   minisSinceLong: number;
+  /**
+   * Inside a busy event: epoch milliseconds the calendar pause ends ("Busy
+   * until HH:MM"), chained events included. `null` otherwise.
+   */
+  busyUntilWall: number | null;
+  /**
+   * Inside a lead shadow: epoch milliseconds the busy event begins ("Busy at
+   * HH:MM"). `null` otherwise.
+   */
+  busyStartsWall: number | null;
 }
 
 /** The millisecond / fraction form of the first eleven GSettings keys. */

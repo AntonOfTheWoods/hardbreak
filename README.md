@@ -110,12 +110,48 @@ does — and only then, never for a skipped, postponed or interrupted break.
   above.
 - **Do Not Disturb.** `show-banners` off means no breaks at all, and a fresh cycle when it
   comes back on.
+- **Your calendar**, if you ask for it — see [Calendar pause](#calendar-pause).
 - **The panel menu.** Pause 1 h, 2 h, or until tomorrow morning (06:00 by default); Reset
   starts the current interval again; the Breaks switch stops everything until you flip it
   back, and survives a reboot.
 
 Every deadline is measured on the monotonic clock, so a suspended laptop does not wake up
 owing you six breaks.
+
+### Calendar pause
+
+Tick one or more calendars in the preferences (the **Calendar** group) and every timed event
+in them pauses breaks: no break starts while the event is on, the panel menu says "Busy until
+11:30" (never the event's title), and when it is over the cycle starts afresh. A break also
+keeps clear of the event's start: none begins if its warning and the break itself would not be
+over 60 seconds before the event does — the _lead shadow_, during which the menu says "Busy at
+10:00". Recurring events, cancelled occurrences and moved ones come from the calendar itself;
+there is no rule editor in hardbreak.
+
+Only timed events count. **All-day events, events marked free** (Outlook's "Show as: Free")
+**and cancelled events never pause anything.**
+
+Use a **dedicated calendar** — "Classes", say — rather than your main one: watching the main
+calendar pauses breaks in every meeting you have.
+
+Edits reach hardbreak as soon as Evolution Data Server has them — how soon that is depends on
+the account's sync — including edits from your phone.
+An event that is already on when it arrives ends a running break — **in strict mode too**.
+That is deliberate: a synced calendar is a remote off switch for the wall. The break is not
+owed afterwards.
+
+It needs Evolution Data Server's introspection data, which the Shell itself does not pull in:
+
+```sh
+sudo apt install gir1.2-ecal-2.0 gir1.2-edataserver-1.2 gir1.2-ical-3.0
+```
+
+plus the backend for your account: `evolution-ews-core` for Microsoft 365 and Exchange
+(Google, CalDAV and local calendars are part of `evolution-data-server`). Add the account in
+_Settings → Online Accounts_. Without the packages the preferences say what is missing and
+breaks carry on as if no calendar were watched. If Evolution Data Server stops answering, the
+events already read (hardbreak looks 48 hours ahead) still pause breaks, and a warning goes to
+the journal; Do Not Disturb remains the manual switch.
 
 ### Why it keeps running on the lock screen
 
@@ -133,25 +169,26 @@ Through _Extensions → hardbreak → ⚙_, or with `gsettings`/`dconf` under
 Version 1.0.0 used the schema id `org.melser.hardbreak`; settings made under it are not
 migrated, so an upgrade from 1.0.0 starts again from the defaults below.
 
-| key               | unit                                                | default             |
-| ----------------- | --------------------------------------------------- | ------------------- |
-| `mini-interval`   | minutes (1–240)                                     | 30                  |
-| `mini-duration`   | seconds (5–3600)                                    | 60                  |
-| `long-duration`   | seconds (5–3600)                                    | 180                 |
-| `minis-per-long`  | count (0–20); 0 = every break is long               | 1                   |
-| `mini-warning`    | seconds (0–300); 0 = no warning                     | 10                  |
-| `long-warning`    | seconds (0–300); 0 = no warning                     | 30                  |
-| `mini-postpone`   | minutes (0–60); 0 = no postponing minis             | 2                   |
-| `long-postpone`   | minutes (0–60); 0 = no postponing longs             | 5                   |
-| `postpone-window` | percent of the break (0–100); 0 = no postponing     | 30                  |
-| `idle-reset`      | minutes away that count as a break (1–120)          | 5                   |
-| `morning-hour`    | hour, local time (0–23), for "pause until tomorrow" | 6                   |
-| `overlay-color`   | CSS hex                                             | `#633738`           |
-| `overlay-opacity` | 0–1                                                 | 0.9                 |
-| `end-sound`       | file path, or empty for silence                     | `crystal-glass.wav` |
-| `strict`          | on/off; no Skip button and no Escape during a break | false               |
-| `breaks-enabled`  | on/off; the panel switch                            | true                |
-| `first-run-done`  | on/off; set false to see the first-run notice again | false               |
+| key                 | unit                                                | default             |
+| ------------------- | --------------------------------------------------- | ------------------- |
+| `mini-interval`     | minutes (1–240)                                     | 30                  |
+| `mini-duration`     | seconds (5–3600)                                    | 60                  |
+| `long-duration`     | seconds (5–3600)                                    | 180                 |
+| `minis-per-long`    | count (0–20); 0 = every break is long               | 1                   |
+| `mini-warning`      | seconds (0–300); 0 = no warning                     | 10                  |
+| `long-warning`      | seconds (0–300); 0 = no warning                     | 30                  |
+| `mini-postpone`     | minutes (0–60); 0 = no postponing minis             | 2                   |
+| `long-postpone`     | minutes (0–60); 0 = no postponing longs             | 5                   |
+| `postpone-window`   | percent of the break (0–100); 0 = no postponing     | 30                  |
+| `idle-reset`        | minutes away that count as a break (1–120)          | 5                   |
+| `morning-hour`      | hour, local time (0–23), for "pause until tomorrow" | 6                   |
+| `overlay-color`     | CSS hex                                             | `#633738`           |
+| `overlay-opacity`   | 0–1                                                 | 0.9                 |
+| `end-sound`         | file path, or empty for silence                     | `crystal-glass.wav` |
+| `strict`            | on/off; no Skip button and no Escape during a break | false               |
+| `breaks-enabled`    | on/off; the panel switch                            | true                |
+| `watched-calendars` | EDS calendar uids, ticked in the preferences        | `[]`                |
+| `first-run-done`    | on/off; set false to see the first-run notice again | false               |
 
 `strict` is read when a break starts, so switching it applies from the next break, not the
 one already on screen. With it off — the default — the overlay offers Skip and Escape; with

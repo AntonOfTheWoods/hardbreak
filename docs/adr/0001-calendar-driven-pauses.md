@@ -35,6 +35,20 @@ every timed event in them is a **busy event** that holds the **calendar pause** 
   preferences say why. Breaks are never affected.
 - EDS runs inside the compositor process. Only async calls are allowed; a synchronous EDS
   call could freeze the desktop.
+- Two obvious EDS APIs are deliberately not used; checked against the EDS 3.56.2 source
+  during implementation. Don't "fix" these back.
+  - `ECalClientView`: its `start()`, `stop()` and `set_flags()` are synchronous D-Bus calls
+    (`e_dbus_calendar_view_call_*_sync`) with no async variant. Live updates come from the
+    client's `backend-property-changed` signal for `revision`, which the file backend and
+    every meta backend (Microsoft 365, EWS, CalDAV, Google) bump on change. It is emitted
+    from an idle source on the main context.
+  - `ESourceRegistry`: its dispose iterates the creator's main context. When GJS drops the
+    last reference during context teardown, gnome-shell segfaults on exit. The Shell opens
+    clients from scratch `ESource`s (`new_with_uid`, no D-Bus). Prefs lists calendars over
+    the registry's D-Bus interface (`org.gnome.evolution.dataserver.Sources5`).
+    `ECal.Client.generate_instances` is avoided too: its time-zone lookup falls back to a
+    synchronous `GetTimezone` call. Recurrences are expanded in-process with
+    `ECal.recur_generate_instances_sync`, which is CPU-only, with a local time-zone resolver.
 - Failure mode is fail-toward-enforcing. Busy events already fetched (a rolling 48-hour
   window) keep gating until they end, but a dead EDS means new or edited events are
   missed. The warning goes to the journal only. Do Not Disturb stays the manual backstop.

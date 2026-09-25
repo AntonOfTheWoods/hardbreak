@@ -116,5 +116,11 @@
       <description>When off, no breaks are scheduled. Toggled from the panel menu and persisted across Shell restarts.</description>
     </key>
 
+    <key name="watched-calendars" type="as">
+      <default>[]</default>
+      <summary>EDS source uids of watched calendars; their timed events pause breaks</summary>
+      <description>Evolution Data Server calendar source uids, ticked in the preferences. While a timed event from one of these calendars is in progress, and for a short lead shadow before it (the next break's warning and duration plus 60 seconds), no break starts; an event in progress also ends a running break. All-day, cancelled and free (transparent) events never count. Uids of calendars that no longer exist are ignored.</description>
+    </key>
+
   </schema>
 </schemalist>

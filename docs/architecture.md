@@ -11,6 +11,7 @@ src/
   core/                      GJS-free. Unit-tested with `bun test`. No `gi://`, no `resource:///`.
     types.ts                 Clock / Timers ports, BreakKind, ScheduleSettings, SchedulerEffects, Snapshot
     scheduler.ts             The state machine (section 3)
+    calendar.ts              BusyInterval, lead shadow, calendarGateAt / nextCalendarEdge (calendar pause)
     watchdog.ts              Hard release deadline + exception guard (section 4)
     ideas.ts                 pickIdea(ideas, kind, rng)
     morning.ts               nextMorning(wallNowMs, morningHour, tz offset fn) → wall ms
@@ -20,6 +21,9 @@ src/
     gjsPorts.ts              GLib-backed Clock + Timers
     settings.ts              Gio.Settings → ScheduleSettings snapshot, `changed` fan-out
     presence.ts              idle monitor + screenShield + login1 + DND → scheduler events
+    calendar.ts              CalendarWatcher: watched calendars → scheduler.setBusyIntervals; busy-event rules
+    eds.ts                   Evolution Data Server behind the watcher's port (dynamic gi:// imports only)
+    edsSources.ts            prefs only: EDS sources over D-Bus (Sources5), no SourceRegistry
     notifier.ts              warning notifications (MessageTray)
     overlay.ts               per-monitor St actors, modal grab, countdown label, postpone + skip buttons
     breakController.ts       SchedulerEffects impl: overlay + watchdog + sound
@@ -68,6 +72,7 @@ Units are chosen so `Gio.Settings.bind()` works without mapping code in prefs.
 | `strict` | b | false | | no Skip button and no Escape during a break; read at break start, so it applies from the next break. Off (the default) is *soft mode*: the same modal wall, plus a Skip button and Escape |
 | `breaks-enabled` | b | true | | the panel-menu Disable toggle; persisted so a Shell restart keeps the choice |
 | `first-run-done` | b | false | | set by `enable()` after the one-off notice explaining what a break does (and, in strict mode, that it cannot be skipped and how to recover a wedged session); set back to false to see it again |
+| `watched-calendars` | as | `[]` | | EDS source uids of the **watched calendars** (ticked in preferences); their timed events are **busy events** and hold the **calendar pause** gate (spec §3). Uids that match no calendar are kept and ignored |
 
 `ScheduleSettings` (core) is the milliseconds/fraction form of the eleven schedule keys
 (`mini-interval` … `morning-hour`):
@@ -99,16 +104,19 @@ export interface SchedulerEffects {
   stateChanged(s: Snapshot): void;             // indicator refresh; cheap, no per-second calls
 }
 
-export type Mode = 'disabled' | 'dnd' | 'away' | 'paused' | 'countdown' | 'warning' | 'break';
+export type Mode = 'disabled' | 'dnd' | 'calendar' | 'away' | 'paused' | 'countdown' | 'warning' | 'break';
 export interface Snapshot {
   mode: Mode; nextKind: BreakKind; nextBreakAt: number | null /* monotonic ms */;
   pausedUntilWall: number | null; minisSinceLong: number;
+  busyUntilWall: number | null;  /* epoch ms, inside a busy event: when the hold ends */
+  busyStartsWall: number | null; /* epoch ms, inside a lead shadow: when the event begins */
 }
 ```
 
 Monotonic `now()` drives every deadline (GLib timeouts stop during suspend, and so does
 `CLOCK_MONOTONIC`, so they stay consistent). Wall time is used only for `awayMs` (computed by
-the adapter) and for "pause until tomorrow".
+the adapter), for "pause until tomorrow", and for the calendar gate, which is always re-read
+from wall time (below).
 
 ### State
 
@@ -123,11 +131,13 @@ remainingMs: number|null  (frozen countdown while away)
 minisSinceLong: number
 postponedThisBreak: boolean
 breakKind, breakStartedAt, breakDurationMs
-timers: warning, break-start, break-end, pause-end
+busyIntervals: BusyInterval[]   (wall ms, merged; from setBusyIntervals)
+calendarGate: none | shadow(busyStartWall) | busy(busyUntilWall)   (as of the last sync)
+timers: warning, break-start, break-end, pause-end, calendar-edge
 ```
 
-`blocked = !enabled || dnd || away || pausedUntil !== null`. `mode` for the snapshot is the
-first true of disabled / dnd / away / paused, else the phase.
+`blocked = !enabled || dnd || calendar || away || pausedUntil !== null`. `mode` for the
+snapshot is the first true of disabled / dnd / calendar / away / paused, else the phase.
 
 ### Rules
 
@@ -175,7 +185,10 @@ first true of disabled / dnd / away / paused, else the phase.
   idleResetMs`: in a break → nothing; otherwise `nextBreakAt = now + remainingMs`, arm
   (a warning that would already be in the past is skipped).
 - **`setDnd(on)`**: on → like `wentAway` for countdown/warning (break continues) but with
-  `dnd = true`; off → `dnd = false` and fresh cycle (if not otherwise blocked).
+  `dnd = true`; off → `dnd = false` and fresh cycle (if not otherwise blocked). During a break
+  only the flag changes: a fresh cycle there would set phase `countdown` under the wall, so
+  postpone and skip would be refused; the break's own end plans from the flags instead.
+  (Every other `planOrIdle` caller already runs outside a break or after ending it.)
 - **`pauseFor(ms)` / `pauseUntilWall(wallMs)`**: cancel countdown timers, phase `off`,
   `pausedUntil = now + ms` (wall variant converts via `wallMs - wallNow()`), pause-end timer
   → `pausedUntil = null` + fresh cycle. Ignored during a break (the modal makes the menu
@@ -187,7 +200,41 @@ first true of disabled / dnd / away / paused, else the phase.
 - **`updateSettings(s)`**: replace settings; if countdown/warning, re-plan from
   `cycleStartedAt`: `nextBreakAt = max(now + 1000, cycleStartedAt + miniIntervalMs)`, arm.
   Never touches a running break.
-- **`start()`** = fresh cycle; **`stop()`** = cancel all timers (extension disable).
+- **calendar gate** (`core/calendar.ts`; spec §3, ADR 0001). The **lead shadow** of a busy
+  event is `[start − shadowMs, start)` with `shadowMs = warningMs(nextKind) +
+  durationMs(nextKind) + 60 s` (`LEAD_SHADOW_MARGIN_MS`, a constant). The gate holds for
+  `wallNow ∈ lead shadow ∪ [start, end)` — purely time-based, whatever `nextBreakAt` is —
+  and chained events and shadows are one continuous hold (`busyUntilWall` is the end of the
+  whole hold). `normalizeBusyIntervals` sorts, merges overlapping/touching intervals and
+  drops zero-length, inverted or non-finite ones before the scheduler stores them.
+- **`syncCalendar()`** re-reads the gate from `wallNow()`, re-arms the **calendar-edge**
+  timer for `nextCalendarEdge − wallNow` (a monotonic timer whose callback re-reads wall
+  time, so a late or early firing only re-arms), and applies a hold: countdown/warning →
+  timers cleared, phase `off`, like DND; phase `off` → `remainingMs = null` (a frozen
+  countdown or an owed break is dropped, because the gate's end is a fresh cycle); phase
+  `break` → only state `busy` interrupts. It runs on `setBusyIntervals`, on the edge timer,
+  in `planOrIdle` (so `start`, `reset`, pause end, `setEnabled(true)`, `setDnd(false)`), on
+  `cameBack` (a suspend stops the edge timer, not the calendar), on `updateSettings`
+  (warning and duration are the shadow), after every break end (the next kind, hence the
+  shadow, may change), after a postponement, and — defensively, against wall/monotonic drift
+  — at the warning and break-start timers, which then do nothing inside a hold.
+- **no orphan warning**: the warning timer also asks the gate at `nextBreakAt` (mapped onto
+  wall time, with the next kind's shadow). If it would hold then — a shadow beginning inside
+  the warning period or exactly at `nextBreakAt` — no warning is given and nothing else
+  changes: that hold starts at or before `nextBreakAt`, so the edge timer stops the countdown
+  first, and `onBreakStart` re-checks when both are due at the same moment.
+- **leaving the gate** → fresh cycle via `planOrIdle` (other gates may still block). Released
+  while away, the frozen countdown is dropped too, so the return is a fresh cycle.
+- **a busy event during a break** (only a late calendar edit can put one there) →
+  `endBreak('interrupted')` (the controller's teardown, no end sound), `remainingMs = null`
+  — *not owed* — phase `off`. A lead shadow does not interrupt: a break that started before
+  its shadow finishes before the event by construction, and if a late edit puts an event
+  inside the rest of a break, the edge timer brings the break down when the event begins.
+  Postponing or skipping inside a shadow arms nothing until the gate is released; a
+  lock/suspend interrupt inside a hold leaves nothing owed (the calendar wins).
+- **`start()`** = fresh cycle; **`stop()`** = cancel all timers, the calendar edge included
+  (extension disable). `pauseFor` and `setEnabled(false)` clear every timer but the
+  calendar edge, so the gate stays current.
 - Every transition ends with `effects.stateChanged(snapshot())` (debounce not needed; it is
   called on transitions only, never per second).
 - Timer callbacks run through a `safe()` wrapper: any exception is logged via an injected
@@ -281,9 +328,81 @@ The 30 s margin is a constant (`WATCHDOG_MARGIN_MS`), not a setting (spec §2).
   carries `strict`; `startBreak` passes `context.strict ? null : () => this.onSkip()`, where
   `onSkip` is `watchdog.guard('skip', () => scheduler.skip()) === true`, the same shape as
   postpone. `BreakSchedulerTarget` is therefore `postpone` + `skip` + `abortBreak`.
+- **calendar** (`shell/calendar.ts` + `shell/eds.ts`; ADR 0001) — `CalendarWatcher` keeps
+  `scheduler.setBusyIntervals()` in step with the **watched calendars**. It talks to EDS
+  through a small port (`CalendarBackend` → `CalendarSource.connect()` →
+  `CalendarConnection.fetch()/watch()`), so its lifecycle is unit-tested with fakes; `eds.ts`
+  implements the port with GObject introspection.
+  - **Loading.** Nothing is loaded until `watched-calendars` is non-empty. `eds.ts` has no
+    static import of an EDS typelib: `gi://ECal?version=2.0`, `gi://EDataServer?version=1.2`
+    and `gi://ICalGLib?version=3.0` come in through dynamic `import()` (GJS 1.88 rejects a
+    missing typelib catchably). If that fails the watcher logs one warning and stays inert: it
+    never calls the scheduler, and breaks run as if no calendar were watched.
+  - **No `EDataServer.SourceRegistry`, in either process.** `source_registry_dispose()` spins
+    the main context the registry was created on until nothing is pending. GJS drops the last
+    reference while it destroys the JavaScript context, so a Shell that had held a registry
+    segfaulted on every exit (SIGTERM → status 139 under a headless Shell 50.1; reproduced in
+    plain gjs with JavaScript sources pending at exit). The Shell opens each watched calendar
+    from a scratch `ESource` (`EDataServer.Source.new_with_uid(uid, null)`: in memory, no
+    D-Bus); the calendar factory resolves the uid in its own registry, and a uid that is
+    unknown, disabled or not a calendar just fails to open. Preferences list calendars from
+    the registry *service* instead (`org.gnome.evolution.dataserver.Sources5`,
+    `GetManagedObjects`, async; each source's key-file `Data` parsed with `GLib.KeyFile`).
+  - **Async only, main thread only.** `ECal.Client.connect(source, EVENTS, (guint32) -1, …)`
+    (do not wait for the backend to be online: its cache answers, and its `revision` bump
+    after syncing reads it again), `get_object_list`, `get_timezone`: GTask-based, run in a
+    worker or libecal's D-Bus thread, callback on the caller's thread-default context — the
+    Shell's main loop. There is no `ECal.ClientView`: its `start()`/`stop()`/`set_flags()`
+    are synchronous D-Bus calls (`e_dbus_calendar_view_call_start_sync`) with no async
+    variant in libecal 3.56. Live updates come from the client's `backend-property-changed`
+    for `revision`, which the file backend and every `ECalMetaBackend` (Microsoft 365, EWS,
+    CalDAV, Google) bump on each stored change; libecal emits it from an idle source on the
+    client's main context (the thread-default context at `connect()`), so on the main thread.
+    Identical revision values are ignored. `ECal.Client.generate_instances()` is not used:
+    in 3.56 its callback does run on the main thread, but it resolves time zones through
+    `e_cal_client_tzlookup_cb()`, which falls back to a synchronous D-Bus `GetTimezone`
+    on a cache miss, and it gives JavaScript no completion signal.
+  - **Reading a calendar** (`fetch(now, now + 48 h)`): (1) `get_object_list` with
+    `(occur-in-time-range? …)`; (2) for every recurring series in it, every component of the
+    series via `(or (uid? …) …)`, because a detached occurrence moved *out* of the window is
+    not in (1) yet must cancel the occurrence its series generates inside it (the file
+    backend's range query also omits detached instances, so without this pass moved-in and
+    cancelled occurrences were wrong too); (3) every TZID not resolvable locally fetched with
+    async `get_timezone`, which also fills the client's zone cache; (4) CPU-only expansion
+    with `ECal.recur_generate_instances_sync()` (RRULE, RDATE, EXRULE, EXDATE), both
+    callbacks `scope call` on the main thread, the time-zone callback answering from the
+    client's cache (`ECal.TimezoneCache.get_timezone`, which also maps aliases onto libical's
+    built-in zones) and libical's built-in zones only — never D-Bus; floating times and
+    unknown zones are local time (`GLib.TimeZone.new_local()`); (5) detached instances applied
+    like `e_cal_client_generate_instances()` (`applyOverrides`: same RECURRENCE-ID replaces,
+    moved out removes, unmatched stands alone, THISANDFUTURE/THISANDPRIOR lend status and
+    transparency); (6) `busyIntervalsOf`: only timed (DATE-valued starts are all-day and
+    skipped), non-empty, not `STATUS:CANCELLED`, not `TRANSP:TRANSPARENT` (Outlook's "free")
+    occurrences overlapping the window, kept whole (not cut at the window edges), merged.
+    Microsoft 365 events arrive with IANA TZIDs (evolution-ews maps Windows zone names through
+    `windowsZones.xml`), which the client cache resolves; zone data files are read by libical
+    on first use of a zone, a one-time few-KB read per zone per process.
+  - **When.** Each calendar is read after connecting, on every `revision` change (at most one
+    read in flight plus one follow-up), every 3 h (`CALENDAR_REFRESH_MS`, a timer owned by
+    the watcher) with the window moved on, on `refresh()` — which the extension calls from
+    presence's `cameBack`, before the scheduler hears of it — and on `watched-calendars`
+    changes. The merged list goes to the scheduler only when it changed.
+  - **Failure.** A failed open or read, or `backend-died`, keeps the calendar's last known
+    intervals (they keep gating until they end) and logs a journal warning (a uid that will
+    not open is logged once per enable). A failure gets one retry after 60 s
+    (`CALENDAR_RETRY_MS`, which also covers online-account calendars that the registry creates
+    shortly after login); after that the calendar waits for the next refresh. Unwatching a
+    calendar drops its intervals. Every callback is wrapped so nothing is thrown into the main
+    loop.
+  - **Teardown.** `disable()` bumps a generation token that every async continuation checks,
+    cancels the one `Gio.Cancellable` shared by all calls, disconnects every client signal and
+    clears both timers. Dropped clients are closed by libecal's dispose with a no-reply D-Bus
+    call.
 - **indicator** — `PanelMenu.Button(0.0, 'hardbreak', false)` with an `St.Icon`
   (`alarm-symbolic`, `system-status-icon`); style class `hardbreak-paused` (dimmed in
-  `stylesheet.css`) whenever mode ≠ countdown/warning. Menu, top to bottom: status line
+  `stylesheet.css`) whenever mode ≠ countdown/warning. The status line reads "Busy until
+  HH:MM" in a busy event and "Busy at HH:MM" in a lead shadow — a time, never the event's
+  title. Menu, top to bottom: status line
   (non-reactive `PopupMenuItem`, refreshed on `open-state-changed` only), separator, Pause 1 h,
   Pause 2 h, Pause until tomorrow, separator, Reset, `PopupSwitchMenuItem('Breaks')` bound to
   `breaks-enabled`. `Main.panel.addToStatusArea('hardbreak', button)`, then
@@ -297,20 +416,30 @@ The 30 s margin is a constant (`WATCHDOG_MARGIN_MS`), not a setting (spec §2).
   fresh cycle — `locked-changed` would never be seen and spec §3's "away < idle-reset →
   resume" would be unreachable for lock and suspend. That reason is repeated as a comment at
   the top of `disable()`, where e.g.o's review tooling looks for it (EGO-M-008).
-- **extension.ts** — `enable()`: settings → scheduler → controller → presence → indicator →
-  `scheduler.start()` → the first-run notice (`first-run-done`, guarded: it must never fail
+- **extension.ts** — `enable()`: settings → scheduler → controller → calendar watcher →
+  presence (its target forwards to the scheduler, and `cameBack` calls `calendar.refresh()`
+  first) → indicator → `scheduler.start()` → `calendar.enable(watched-calendars)` → the
+  first-run notice (`first-run-done`, guarded: it must never fail
   `enable()`; its wording follows `readStrict(settings)` at enable time, since it is shown
   once and must not promise a Skip button that is switched off). `readContext()` fills
   `strict` alongside the other break-time fields. `assets/ideas.json` is read with
   `Gio.File.load_contents_async` under a `Gio.Cancellable` — no synchronous IO on the main
   loop (EGO-X-004) — so `ideas` starts empty and is filled when the read lands; the callback
-  does nothing if it fires after teardown. `disable()`: reverse order;
-  `controller.forceRelease('disable')` if a break is running; disconnect every signal; cancel
+  does nothing if it fires after teardown. `watched-calendars` changes go to
+  `calendar.setWatched()`. `disable()`: reverse order;
+  `controller.forceRelease('disable')` if a break is running; presence, then the calendar
+  watcher, torn down before `scheduler.stop()`; disconnect every signal; cancel
   the idea-book read; destroy the first-run notifier; null every field (GNOME review rules).
 - **prefs.ts** — first group is **Enforcement**, an `Adw.SwitchRow` bound to `strict`; its
   subtitle says the change applies from the next break and repeats the Ctrl+Alt+F3 recovery,
   because this is the switch that removes every other way out of a running break. The
-  **Breaks** switch stays in the Schedule group.
+  **Breaks** switch stays in the Schedule group. After Schedule comes **Calendar**: one
+  `Adw.SwitchRow` per enabled EDS calendar (title: its name; subtitle: its account, or "On
+  this computer"), adding or removing its uid in `watched-calendars` and keeping every other
+  entry, known or not. The list is read asynchronously (`readSourceRecords` in
+  `edsSources.ts`, then `calendarChoices` in `calendar.ts`); a spinner row shows meanwhile, and one inert row replaces it when the
+  introspection data is missing ("Needs gir1.2-ecal-2.0, gir1.2-edataserver-1.2 and
+  gir1.2-ical-3.0"), when EDS cannot be reached, or when there is no calendar.
 
 ## 6. Tooling
 
@@ -333,9 +462,33 @@ The 30 s margin is a constant (`WATCHDOG_MARGIN_MS`), not a setting (spec §2).
 (`install`/`uninstall` from spec §8 are named `install:ext`/`uninstall:ext` because bun treats a
 root `install` script as a lifecycle hook of `bun install`.)
 
+Development dependencies (nothing is bundled; GJS loads the emitted JavaScript). Versions were
+checked with `bun info <pkg> version` on 2026-09-25; `packageManager` is `bun@1.4.2`, the
+bun that `mise.toml`'s `bun = "1.4"` resolves to.
+
+| package | version | note |
+|---|---|---|
+| `typescript` | 7.0.2 | latest |
+| `oxlint` / `oxfmt` | 1.85.0 / 0.70.0 | latest |
+| `@types/bun` | 1.4.2 | latest |
+| `@girs/gnome-shell` | 50.0.4 | latest; the 50.x line matches the installed Shell 50.1 |
+| `@girs/gjs`, `@girs/adw-1`, `@girs/gtk-4.0`, `@girs/ecal-2.0`, `@girs/edataserver-1.2`, `@girs/icalglib-3.0` | 4.9.0 | **pinned below the latest (5.4.0)** — see below |
+
+The `@girs` pin: `@girs/gnome-shell@50.0.4` depends on `@girs/*@^4.1.0`, and no Shell-50
+typings exist on the 5.x line. Installing the 5.x packages at the root puts two copies of the
+GObject/Gio/GLib typings in one program, with two `declare module 'gi://Gio'` that TypeScript
+merges silently: under the project's ambient imports a signal name that `@girs/gio-2.0@5.4.0`
+alone rejects type-checks again. Every `@girs` package therefore stays on 4.9.0, the latest
+4.x, so the tree holds one coherent copy. Move them to 5.x together once a 5.x-based
+`@girs/gnome-shell` is published. The three EDS typings are only for `import type`: the
+typelibs are loaded at runtime with dynamic `import()` (section 5, calendar).
+
 CI (`.github/workflows/`): `ci.yml` runs `validate` + `pack` on pushes to `develop`/`main` and on
 pull requests and uploads the zip; `release.yml` does the same on a `v*` tag and attaches the zip
 to a GitHub release with the tag message as the notes.
+
+`src/shell/ambient.d.ts` adds the `@girs/ecal-2.0`, `@girs/edataserver-1.2` and
+`@girs/icalglib-3.0` ambient modules to the runtime and Shell-test projects.
 
 The root `tsconfig.json` is a solution configuration referencing the three projects so
 editors can discover them. `tsconfig.tooling.json` covers `src/core/**` including tests and

@@ -25,14 +25,17 @@
     "prepare": "bun run scripts/install-hooks.ts"
   },
   "devDependencies": {
-    "@girs/adw-1": "4.1.0",
-    "@girs/gjs": "4.1.0",
+    "@girs/adw-1": "4.9.0",
+    "@girs/ecal-2.0": "4.9.0",
+    "@girs/edataserver-1.2": "4.9.0",
+    "@girs/gjs": "4.9.0",
     "@girs/gnome-shell": "50.0.4",
-    "@girs/gtk-4.0": "4.1.0",
-    "@types/bun": "1.4.0",
-    "oxfmt": "0.65.0",
-    "oxlint": "1.80.0",
+    "@girs/gtk-4.0": "4.9.0",
+    "@girs/icalglib-3.0": "4.9.0",
+    "@types/bun": "1.4.2",
+    "oxfmt": "0.70.0",
+    "oxlint": "1.85.0",
     "typescript": "7.0.2"
   },
-  "packageManager": "bun@1.4.0"
+  "packageManager": "bun@1.4.2"
 }

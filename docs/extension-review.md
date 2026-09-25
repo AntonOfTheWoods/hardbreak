@@ -93,7 +93,7 @@ only certain cleanup method names. Some rule suggestions also recommend `_destro
 which conflict with the current best-practices page. The checked-in validation, packaging
 checks and lifecycle tests remain the required gates.
 
-Final project validation passed: **135 tests**, typechecking, lint, formatting and ZIP
+Final project validation passed: **212 tests**, typechecking, lint, formatting and ZIP
 packaging. A TypeScript 7 language-server probe resolved Gio, Adw and the Shell test
 imports through the solution configuration. The isolated Shell 50.1 smoke test passed
 again with the updated metadata and compiler configuration.

@@ -633,6 +633,35 @@ describe('do not disturb', () => {
     h.scheduler.setDnd(false);
     expect(h.events).toEqual([]);
   });
+
+  for (const action of ['postpone', 'skip'] as const) {
+    test(`switched on and off during a break, it leaves the break running: ${action} still works`, () => {
+      const h = started(makeHarness());
+      h.timers.advance(30 * MINUTE); // the mini starts
+      h.timers.advance(5 * SECOND);
+      h.scheduler.setDnd(true);
+      h.scheduler.setDnd(false);
+      expect(h.lastState()).toMatchObject({ mode: 'break', nextBreakAt: null });
+      expect(h.timers.pending).toBe(1); // the break end, and nothing armed behind it
+      expect(h.scheduler[action]()).toBe(true);
+      expect(h.endReasons()).toEqual([action === 'skip' ? 'skipped' : 'postponed']);
+      expect(h.lastState().mode).toBe('countdown');
+    });
+  }
+
+  test('switched on and off during a break, the break end plans the next cycle normally', () => {
+    const h = started(makeHarness());
+    h.timers.advance(30 * MINUTE);
+    h.scheduler.setDnd(true);
+    h.scheduler.setDnd(false);
+    h.timers.advance(60 * SECOND);
+    expect(h.endReasons()).toEqual(['completed']);
+    expect(h.lastState()).toMatchObject({ mode: 'countdown', nextKind: 'long' });
+    expect(h.lastState().nextBreakAt).toBe(31 * MINUTE + 30 * MINUTE);
+    expect(h.timers.pending).toBe(2); // one warning and one break start, not two of each
+    expect(cycle(h)).toBe('long');
+    expect(h.startedKinds()).toEqual(['mini', 'long']);
+  });
 });
 
 describe('pause', () => {
@@ -877,6 +906,8 @@ describe('snapshots', () => {
       nextBreakAt: null,
       pausedUntilWall: null,
       minisSinceLong: 0,
+      busyUntilWall: null,
+      busyStartsWall: null,
     });
   });
 });
@@ -1019,5 +1050,434 @@ describe('timer hygiene', () => {
     scheduler.stop();
 
     expect(staleClears).toEqual([]);
+  });
+
+  test('the calendar edge timer is never cleared after it has fired either', () => {
+    const clock = new FakeClock();
+    const { timers, advance, staleClears } = trackingTimers(clock);
+    const scheduler = new Scheduler(settings(), silentEffects, clock, timers, () => {});
+    const nine = clock.wallNow();
+
+    scheduler.start();
+    scheduler.setBusyIntervals([
+      { startWall: nine + 10 * MINUTE, endWall: nine + 20 * MINUTE },
+      { startWall: nine + 40 * MINUTE, endWall: nine + 50 * MINUTE },
+    ]);
+    advance(15 * MINUTE); // shadow start, event start
+    scheduler.setBusyIntervals([{ startWall: nine + 40 * MINUTE, endWall: nine + 50 * MINUTE }]);
+    advance(60 * MINUTE); // shadow, event, end, and a break
+    scheduler.stop();
+
+    expect(staleClears).toEqual([]);
+  });
+});
+
+describe('calendar pause', () => {
+  /** Wall time on the fake clock's day (it starts at 09:00 UTC). */
+  function wall(hours: number, minutes = 0, seconds = 0): number {
+    return Date.UTC(2026, 0, 1, hours, minutes, seconds);
+  }
+
+  function advanceTo(h: Harness, wallMs: number): void {
+    h.timers.advance(wallMs - h.clock.wallNow());
+  }
+
+  function event(start: number, end: number): { startWall: number; endWall: number } {
+    return { startWall: start, endWall: end };
+  }
+
+  const MINI_SHADOW = 10 * SECOND + 60 * SECOND + 60 * SECOND;
+  const LONG_SHADOW = 30 * SECOND + 180 * SECOND + 60 * SECOND;
+
+  test('a busy event stops the countdown like DND, and its end is a fresh cycle', () => {
+    const h = started(makeHarness());
+    h.scheduler.setBusyIntervals([event(wall(9, 10), wall(9, 20))]);
+    expect(h.lastState().mode).toBe('countdown');
+
+    advanceTo(h, wall(9, 10) - MINI_SHADOW - 1);
+    expect(h.lastState().mode).toBe('countdown');
+    h.timers.advance(1);
+    expect(h.lastState()).toMatchObject({
+      mode: 'calendar',
+      nextBreakAt: null,
+      busyStartsWall: wall(9, 10),
+      busyUntilWall: null,
+    });
+    expect(h.timers.pending).toBe(1); // the calendar edge, nothing else
+
+    advanceTo(h, wall(9, 10));
+    expect(h.lastState()).toMatchObject({
+      mode: 'calendar',
+      busyStartsWall: null,
+      busyUntilWall: wall(9, 20),
+    });
+
+    advanceTo(h, wall(9, 20));
+    expect(h.lastState().mode).toBe('countdown');
+    expect(h.lastState().busyUntilWall).toBeNull();
+    expect(h.effectEvents()).toEqual([]);
+
+    // A fresh cycle: the next break is a full interval after the event.
+    advanceTo(h, wall(9, 50) - 1);
+    expect(h.startedKinds()).toEqual([]);
+    h.timers.advance(1);
+    expect(h.startedKinds()).toEqual(['mini']);
+  });
+
+  test('the 09:58 case: a long break that would straddle a 10:00 event never starts', () => {
+    // Every break long, the next one due at 09:58 (its warning at 09:57:30).
+    const h = started(makeHarness({ minisPerLong: 0, miniIntervalMs: 58 * MINUTE }));
+    h.scheduler.setBusyIntervals([event(wall(10), wall(10, 45))]);
+
+    // Silence begins at 10:00 − (30 s warning + 180 s break + 60 s): 09:55:30.
+    expect(wall(10) - LONG_SHADOW).toBe(wall(9, 55, 30));
+    advanceTo(h, wall(9, 55, 30) - 1);
+    expect(h.lastState().mode).toBe('countdown');
+    h.timers.advance(1);
+    expect(h.lastState()).toMatchObject({ mode: 'calendar', busyStartsWall: wall(10) });
+
+    advanceTo(h, wall(10, 45) - 1);
+    expect(h.effectEvents()).toEqual([]);
+    h.timers.advance(1);
+    expect(h.lastState().mode).toBe('countdown');
+
+    advanceTo(h, wall(11, 43));
+    expect(h.events.filter((e) => e.type === 'warn')).toHaveLength(1);
+    expect(h.startedKinds()).toEqual(['long']);
+  });
+
+  test('a break that finishes more than 60 s before the event still runs, into the shadow', () => {
+    // Long break at 09:54, over at 09:57; the shadow of a 10:00 event starts
+    // at 09:55:30, while it is running. It is not interrupted.
+    const h = started(makeHarness({ minisPerLong: 0, miniIntervalMs: 54 * MINUTE }));
+    h.scheduler.setBusyIntervals([event(wall(10), wall(10, 45))]);
+
+    advanceTo(h, wall(9, 54));
+    expect(h.startedKinds()).toEqual(['long']);
+    advanceTo(h, wall(9, 55, 30));
+    expect(h.endReasons()).toEqual([]);
+    expect(h.lastState().mode).toBe('calendar');
+
+    advanceTo(h, wall(9, 57));
+    expect(h.endReasons()).toEqual(['completed']);
+    // No new countdown behind the gate.
+    expect(h.lastState()).toMatchObject({ mode: 'calendar', nextBreakAt: null });
+    expect(h.timers.pending).toBe(1);
+
+    advanceTo(h, wall(10, 45));
+    expect(h.lastState().mode).toBe('countdown');
+    expect(h.startedKinds()).toEqual(['long']);
+  });
+
+  test('no warning when a shadow begins inside the warning period', () => {
+    // Break due 09:55:45, its warning due 09:55:15; the shadow of a 10:00
+    // event starts at 09:55:30, in between. The warning would have no break.
+    const h = started(makeHarness({ minisPerLong: 0, miniIntervalMs: 55 * MINUTE + 45 * SECOND }));
+    h.scheduler.setBusyIntervals([event(wall(10), wall(10, 45))]);
+    advanceTo(h, wall(9, 55, 15));
+    expect(h.lastState().mode).toBe('countdown');
+    advanceTo(h, wall(9, 55, 30));
+    expect(h.lastState().mode).toBe('calendar');
+    advanceTo(h, wall(10, 45));
+    expect(h.events.filter((e) => e.type === 'warn')).toEqual([]);
+    expect(h.startedKinds()).toEqual([]);
+  });
+
+  test('no warning when the shadow begins exactly as the break is due', () => {
+    // Break due 09:55:30, warned at 09:55:00; the shadow starts at 09:55:30.
+    const h = started(makeHarness({ minisPerLong: 0, miniIntervalMs: 55 * MINUTE + 30 * SECOND }));
+    h.scheduler.setBusyIntervals([event(wall(10), wall(10, 45))]);
+    expect(wall(10) - LONG_SHADOW).toBe(wall(9, 55, 30));
+    advanceTo(h, wall(9, 55, 30));
+    expect(h.lastState().mode).toBe('calendar');
+    advanceTo(h, wall(10, 45));
+    expect(h.events.filter((e) => e.type === 'warn')).toEqual([]);
+    expect(h.startedKinds()).toEqual([]);
+  });
+
+  test('a shadow that begins just after the break would end leaves warning and break alone', () => {
+    // Break due 09:52, over at 09:55:00; the event at 09:59:31 casts its
+    // shadow from 09:55:01.
+    const h = started(makeHarness({ minisPerLong: 0, miniIntervalMs: 52 * MINUTE }));
+    h.scheduler.setBusyIntervals([event(wall(9, 59, 31), wall(10, 45))]);
+    advanceTo(h, wall(9, 51, 30));
+    expect(h.effectEvents()).toEqual([
+      { type: 'warn', kind: 'long', secondsUntil: 30, at: h.clock.now() },
+    ]);
+    advanceTo(h, wall(9, 55));
+    expect(h.startedKinds()).toEqual(['long']);
+    expect(h.endReasons()).toEqual(['completed']);
+    advanceTo(h, wall(9, 55, 1));
+    expect(h.lastState().mode).toBe('calendar');
+  });
+
+  test('the shadow follows the next kind: a mini fits where a long does not', () => {
+    // Mini due at 09:56:30 (over at 09:57:30), then the event at 10:00. The
+    // mini shadow (130 s) starts at 09:57:50, after the mini is over.
+    const mini = started(makeHarness({ miniIntervalMs: 56 * MINUTE + 30 * SECOND }));
+    mini.scheduler.setBusyIntervals([event(wall(10), wall(10, 45))]);
+    advanceTo(mini, wall(9, 58));
+    expect(mini.startedKinds()).toEqual(['mini']);
+    expect(mini.endReasons()).toEqual(['completed']);
+
+    // The same slot for a long break: its shadow (270 s) starts at 09:55:30.
+    const long = started(
+      makeHarness({ minisPerLong: 0, miniIntervalMs: 56 * MINUTE + 30 * SECOND }),
+    );
+    long.scheduler.setBusyIntervals([event(wall(10), wall(10, 45))]);
+    advanceTo(long, wall(9, 58));
+    expect(long.startedKinds()).toEqual([]);
+  });
+
+  test('a busy event added during a break interrupts it, and it is not owed', () => {
+    const h = started(makeHarness());
+    advanceTo(h, wall(9, 30)); // the mini starts
+    advanceTo(h, wall(9, 30, 20));
+    // A late edit from a phone: an event that is already in progress.
+    h.scheduler.setBusyIntervals([event(wall(9, 30), wall(10))]);
+    expect(h.endReasons()).toEqual(['interrupted']);
+    expect(h.lastState()).toMatchObject({ mode: 'calendar', busyUntilWall: wall(10) });
+    expect(h.timers.pending).toBe(1); // the break-end timer is gone
+
+    advanceTo(h, wall(9, 32));
+    expect(h.endReasons()).toEqual(['interrupted']); // no completion follows
+
+    advanceTo(h, wall(10));
+    expect(h.lastState().mode).toBe('countdown');
+    // Not owed: no warning replay, and a fresh cycle — the next break is a
+    // mini a full interval later, not the long a completed mini would earn.
+    expect(h.events.filter((e) => e.type === 'warn')).toHaveLength(1);
+    advanceTo(h, wall(10, 30));
+    expect(h.startedKinds()).toEqual(['mini', 'mini']);
+  });
+
+  test('an event added just ahead of a running break interrupts it when it begins', () => {
+    const h = started(makeHarness());
+    advanceTo(h, wall(9, 30, 10)); // mini running until 09:31
+    h.scheduler.setBusyIntervals([event(wall(9, 30, 40), wall(10))]);
+    // Only the shadow holds so far: the break carries on.
+    expect(h.endReasons()).toEqual([]);
+    expect(h.lastState().mode).toBe('calendar');
+    advanceTo(h, wall(9, 30, 40));
+    expect(h.endReasons()).toEqual(['interrupted']);
+  });
+
+  test('an empty list releases the gate with a fresh cycle', () => {
+    const h = started(makeHarness());
+    advanceTo(h, wall(9, 20));
+    h.scheduler.setBusyIntervals([event(wall(9, 15), wall(11))]);
+    expect(h.lastState().mode).toBe('calendar');
+    advanceTo(h, wall(9, 40));
+    h.scheduler.setBusyIntervals([]);
+    expect(h.lastState().mode).toBe('countdown');
+    expect(h.lastState().nextBreakAt).toBe(h.clock.now() + 30 * MINUTE);
+    expect(h.timers.pending).toBe(2); // warning and break start, no edge
+  });
+
+  test('chained events are one continuous hold with no fresh cycle in between', () => {
+    const h = started(makeHarness());
+    h.scheduler.setBusyIntervals([
+      event(wall(9, 10), wall(9, 20)),
+      event(wall(9, 21), wall(9, 30)),
+    ]);
+    h.clear();
+    advanceTo(h, wall(9, 15));
+    expect(h.lastState().busyUntilWall).toBe(wall(9, 30));
+    advanceTo(h, wall(9, 20, 30));
+    expect(h.lastState()).toMatchObject({ mode: 'calendar', busyStartsWall: wall(9, 21) });
+    advanceTo(h, wall(9, 30));
+    expect(h.modes().filter((mode) => mode !== 'calendar')).toEqual(['countdown']);
+    expect(h.lastState().nextBreakAt).toBe(h.clock.now() + 30 * MINUTE);
+  });
+
+  test('zero-length and inverted intervals are dropped', () => {
+    const h = started(makeHarness());
+    h.scheduler.setBusyIntervals([
+      event(wall(9, 10), wall(9, 10)),
+      event(wall(9, 20), wall(9, 15)),
+    ]);
+    expect(h.timers.pending).toBe(2); // no calendar edge was armed
+    advanceTo(h, wall(9, 30));
+    expect(h.modes()).not.toContain('calendar');
+    expect(h.startedKinds()).toEqual(['mini']);
+  });
+
+  test('precedence: disabled > dnd > calendar > away > paused', () => {
+    const h = started(makeHarness());
+    h.scheduler.pauseFor(3 * 60 * MINUTE);
+    expect(h.lastState().mode).toBe('paused');
+    h.scheduler.wentAway();
+    expect(h.lastState().mode).toBe('away');
+    h.scheduler.setBusyIntervals([event(wall(9), wall(11))]);
+    expect(h.lastState().mode).toBe('calendar');
+    h.scheduler.setDnd(true);
+    expect(h.lastState().mode).toBe('dnd');
+    h.scheduler.setEnabled(false);
+    expect(h.lastState().mode).toBe('disabled');
+    h.scheduler.setEnabled(true);
+    h.scheduler.setDnd(false);
+    expect(h.lastState().mode).toBe('calendar');
+    h.scheduler.setBusyIntervals([]);
+    expect(h.lastState().mode).toBe('away');
+  });
+
+  test('an event that ends during a pause leaves the pause in charge', () => {
+    const h = started(makeHarness());
+    h.scheduler.pauseFor(60 * MINUTE);
+    h.scheduler.setBusyIntervals([event(wall(9, 10), wall(9, 20))]);
+    advanceTo(h, wall(9, 15));
+    expect(h.lastState().mode).toBe('calendar');
+    advanceTo(h, wall(9, 20));
+    expect(h.lastState().mode).toBe('paused');
+    advanceTo(h, wall(10));
+    expect(h.lastState().mode).toBe('countdown');
+    expect(h.lastState().nextBreakAt).toBe(h.clock.now() + 30 * MINUTE);
+  });
+
+  test('an event that comes and goes during a short absence still ends in a fresh cycle', () => {
+    const h = started(makeHarness());
+    advanceTo(h, wall(9, 10));
+    h.scheduler.wentAway(); // 20 minutes of countdown frozen
+    h.scheduler.setBusyIntervals([event(wall(9, 11), wall(9, 12))]);
+    advanceTo(h, wall(9, 13));
+    h.scheduler.cameBack(3 * MINUTE);
+    // Not the frozen 20 minutes: the calendar's end is a fresh cycle.
+    expect(h.lastState().nextBreakAt).toBe(h.clock.now() + 30 * MINUTE);
+  });
+
+  test('an event that ends during Do Not Disturb waits for DND to go off', () => {
+    const h = started(makeHarness());
+    h.scheduler.setDnd(true);
+    h.scheduler.setBusyIntervals([event(wall(9, 5), wall(9, 10))]);
+    advanceTo(h, wall(9, 7));
+    expect(h.lastState()).toMatchObject({ mode: 'dnd', busyUntilWall: wall(9, 10) });
+    advanceTo(h, wall(9, 20));
+    expect(h.lastState().mode).toBe('dnd');
+    h.scheduler.setDnd(false);
+    expect(h.lastState().mode).toBe('countdown');
+    expect(h.lastState().nextBreakAt).toBe(h.clock.now() + 30 * MINUTE);
+  });
+
+  test('an owed break is dropped when the calendar gate starts: the calendar wins', () => {
+    const h = started(makeHarness({ idleResetMs: 60 * MINUTE }));
+    advanceTo(h, wall(9, 30, 10)); // the mini is running
+    h.scheduler.wentAway({ interruptBreak: true }); // locked: the break is owed
+    expect(h.endReasons()).toEqual(['interrupted']);
+    h.scheduler.setBusyIntervals([event(wall(9, 35), wall(9, 45))]);
+    advanceTo(h, wall(9, 50));
+    // Back well inside idle-reset: without the calendar the owed mini's
+    // warning would be due immediately.
+    h.scheduler.cameBack(20 * MINUTE);
+    h.timers.advance(0);
+    expect(h.events.filter((e) => e.type === 'warn')).toHaveLength(1);
+    expect(h.lastState()).toMatchObject({ mode: 'countdown', nextKind: 'mini' });
+    expect(h.lastState().nextBreakAt).toBe(h.clock.now() + 30 * MINUTE);
+  });
+
+  test('an owed break cut short inside a shadow is dropped across a suspend', () => {
+    const h = started(makeHarness({ idleResetMs: 60 * MINUTE }));
+    advanceTo(h, wall(9, 30, 10)); // mini running until 09:31
+    h.scheduler.setBusyIntervals([event(wall(9, 32), wall(9, 40))]); // shadow now
+    h.scheduler.wentAway({ interruptBreak: true }); // lid closed
+    // Suspended through the whole event: wall time moves, monotonic does not,
+    // so no edge timer fires until the machine is back.
+    h.clock.sleep(15 * MINUTE);
+    h.scheduler.cameBack(15 * MINUTE);
+    h.timers.advance(0);
+    expect(h.events.filter((e) => e.type === 'warn')).toHaveLength(1);
+    expect(h.lastState().mode).toBe('countdown');
+    expect(h.lastState().nextBreakAt).toBe(h.clock.now() + 30 * MINUTE);
+  });
+
+  test('coming back inside a busy event holds straight away', () => {
+    const h = started(makeHarness());
+    h.scheduler.setBusyIntervals([event(wall(10), wall(11))]);
+    h.scheduler.wentAway();
+    h.clock.sleep(65 * MINUTE); // suspended; now 10:05
+    h.scheduler.cameBack(65 * MINUTE);
+    expect(h.lastState()).toMatchObject({ mode: 'calendar', busyUntilWall: wall(11) });
+    expect(h.timers.pending).toBe(1);
+  });
+
+  test('longer breaks in the settings lengthen the shadow, shorter ones release it', () => {
+    const h = started(makeHarness());
+    h.scheduler.setBusyIntervals([event(wall(9, 20), wall(9, 25))]);
+    advanceTo(h, wall(9, 15, 30)); // mini shadow starts at 09:17:50
+    expect(h.lastState().mode).toBe('countdown');
+    h.scheduler.updateSettings(settings({ miniDurationMs: 5 * MINUTE }));
+    // 10 s + 5 min + 60 s: the shadow now starts at 09:13:50.
+    expect(h.lastState()).toMatchObject({ mode: 'calendar', busyStartsWall: wall(9, 20) });
+    h.scheduler.updateSettings(settings());
+    expect(h.lastState().mode).toBe('countdown');
+    expect(h.lastState().nextBreakAt).toBe(h.clock.now() + 30 * MINUTE);
+  });
+
+  test('the gate is re-read from wall time even when the edge timer is late', () => {
+    const h = started(makeHarness());
+    h.scheduler.setBusyIntervals([event(wall(10), wall(10, 30))]);
+    // The wall clock jumps ahead of the monotonic one (a suspend without an
+    // absence reaching the scheduler, or a corrected clock): 09:58 at mono 0.
+    h.clock.sleep(58 * MINUTE);
+    // The warning timer fires first, at 10:27:50 wall, inside the event.
+    advanceTo(h, wall(10, 27, 50));
+    expect(h.events.filter((e) => e.type === 'warn')).toEqual([]);
+    expect(h.lastState()).toMatchObject({ mode: 'calendar', busyUntilWall: wall(10, 30) });
+    // The edge timer was re-armed from wall time and releases on time.
+    advanceTo(h, wall(10, 30));
+    expect(h.lastState().mode).toBe('countdown');
+    expect(h.startedKinds()).toEqual([]);
+  });
+
+  test('skipping a break that ran into a shadow arms nothing until the event is over', () => {
+    const h = started(makeHarness({ minisPerLong: 0, miniIntervalMs: 54 * MINUTE }));
+    h.scheduler.setBusyIntervals([event(wall(10), wall(10, 45))]);
+    advanceTo(h, wall(9, 55, 40)); // the long break is running, the shadow holds
+    expect(h.scheduler.skip()).toBe(true);
+    expect(h.lastState()).toMatchObject({ mode: 'calendar', nextBreakAt: null });
+    expect(h.timers.pending).toBe(1);
+    advanceTo(h, wall(10, 45));
+    expect(h.lastState().mode).toBe('countdown');
+  });
+
+  test('a postponed break is not armed inside a shadow', () => {
+    const h = started(makeHarness({ minisPerLong: 0, miniIntervalMs: 55 * MINUTE }));
+    advanceTo(h, wall(9, 55)); // long break running until 09:58
+    h.scheduler.setBusyIntervals([event(wall(10), wall(10, 45))]); // shadow since 09:55:30
+    advanceTo(h, wall(9, 55, 40));
+    expect(h.scheduler.postpone()).toBe(true);
+    expect(h.lastState()).toMatchObject({ mode: 'calendar', nextBreakAt: null });
+    advanceTo(h, wall(10, 45));
+    expect(h.startedKinds()).toEqual(['long']);
+    expect(h.lastState().mode).toBe('countdown');
+  });
+
+  test('an event already running at start() holds from the outset', () => {
+    const h = makeHarness();
+    h.scheduler.setBusyIntervals([event(wall(8, 30), wall(9, 30))]);
+    h.scheduler.start();
+    expect(h.lastState()).toMatchObject({ mode: 'calendar', busyUntilWall: wall(9, 30) });
+    advanceTo(h, wall(9, 30));
+    expect(h.lastState().mode).toBe('countdown');
+  });
+
+  test('enabling breaks inside a busy event keeps them off until it ends', () => {
+    const h = started(makeHarness());
+    h.scheduler.setEnabled(false);
+    h.scheduler.setBusyIntervals([event(wall(9, 5), wall(9, 50))]);
+    advanceTo(h, wall(9, 10));
+    h.scheduler.setEnabled(true);
+    expect(h.lastState().mode).toBe('calendar');
+    advanceTo(h, wall(9, 50));
+    expect(h.lastState().mode).toBe('countdown');
+  });
+
+  test('stop() leaves no calendar edge timer behind', () => {
+    const h = started(makeHarness());
+    h.scheduler.setBusyIntervals([event(wall(12), wall(13))]);
+    h.scheduler.stop();
+    expect(h.timers.pending).toBe(0);
+    h.scheduler.setBusyIntervals([event(wall(12), wall(13))]);
+    expect(h.timers.pending).toBe(0);
+    expect(h.lastState().mode).toBe('disabled');
   });
 });

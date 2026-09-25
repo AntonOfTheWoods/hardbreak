@@ -56,3 +56,15 @@ export function createLog(): Log {
     else console.error(msg, err);
   };
 }
+
+/**
+ * Expected, recoverable failures — a calendar that cannot be opened or read,
+ * missing optional introspection data: one journal line at warning level,
+ * without the backtrace `logError` would attach.
+ */
+export function createWarn(): Log {
+  return (msg: string, err?: unknown) => {
+    if (err === undefined) console.warn(msg);
+    else console.warn(`${msg}: ${err instanceof Error ? err.message : String(err)}`);
+  };
+}

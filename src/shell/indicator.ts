@@ -222,6 +222,15 @@ export class Indicator {
         return 'Breaks disabled';
       case 'dnd':
         return 'Do Not Disturb';
+      case 'calendar':
+        // Calendar pause: a time and nothing else — never the event's title.
+        if (snapshot.busyUntilWall !== null) {
+          return `Busy until ${formatWallTime(snapshot.busyUntilWall)}`;
+        }
+        if (snapshot.busyStartsWall !== null) {
+          return `Busy at ${formatWallTime(snapshot.busyStartsWall)}`;
+        }
+        return 'Busy';
       case 'away':
         return 'Away';
       case 'paused':
@@ -238,7 +247,7 @@ export class Indicator {
   }
 }
 
-/** Local 24-hour `HH:MM`, which is what "Paused until 06:00" wants. */
+/** Local 24-hour `HH:MM`, which is what "Paused until 06:00" and "Busy until 11:30" want. */
 function formatWallTime(wallMs: number): string {
   const date = new Date(wallMs);
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;

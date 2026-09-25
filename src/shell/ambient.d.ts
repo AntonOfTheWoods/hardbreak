@@ -5,3 +5,7 @@ import '@girs/gjs';
 import '@girs/gjs/dom';
 import '@girs/gnome-shell/ambient';
 import '@girs/gnome-shell/extensions/global';
+// Calendar pause (ADR 0001). Loaded at runtime with dynamic import() only.
+import '@girs/ecal-2.0/ambient';
+import '@girs/edataserver-1.2/ambient';
+import '@girs/icalglib-3.0/ambient';
