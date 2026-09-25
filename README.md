@@ -292,6 +292,15 @@ database (`~/.config/dconf/hardbreak_devkit`, selected with `DCONF_PROFILE`), so
 - **nothing re-indexes your home directory** — Tracker's file miner is disabled in that
   database, so the fresh bus does not activate it.
 
+The devkit also has its own Evolution Data Server state. Its private bus
+(`tmp/devkit/dbus/session.conf`: the stock session config plus stub services) runs EDS on
+`tmp/devkit/eds/` instead of `~/.config/evolution`, `~/.cache/evolution` and
+`~/.local/share/evolution`, and disables Online Accounts and the secret service. So the only
+calendars there are EDS's built-in ones, including an empty devkit-local "Personal" calendar.
+Online-account calendars (Microsoft 365, Google…) are absent, and nothing the devkit does
+touches your live Evolution or Online Accounts data. Test calendar pause with events in the
+devkit's "Personal" calendar, or on the live session.
+
 Drive the running devkit from your normal terminal with `devkit:ctl`, which finds the
 nested Shell's bus address and talks to _it_ rather than to the live Shell:
 
@@ -304,12 +313,12 @@ bun run devkit:ctl get mini-interval
 bun run devkit:ctl fast                    # re-apply the fast schedule
 bun run devkit:ctl defaults                # reset every hardbreak key
 bun run devkit:ctl eval 'Main.modalCount'  # JS inside the nested Shell; needs HARDBREAK_DEVKIT_UNSAFE=1 bun run devkit
-bun run devkit:reset                       # delete the devkit db (next launch = first run)
+bun run devkit:reset                       # delete the devkit db and EDS state (next launch = first run)
 ```
 
 `eval` runs arbitrary JS inside the nested Shell, so it is refused unless the devkit was
 started with `HARDBREAK_DEVKIT_UNSAFE=1`. `devkit:reset` refuses while a devkit is running,
-and only ever removes `~/.config/dconf/hardbreak_devkit`.
+and only ever removes `~/.config/dconf/hardbreak_devkit` and `tmp/devkit/eds/`.
 
 Two more things worth knowing:
 

@@ -3,7 +3,10 @@
  * Launch a nested gnome-shell for testing, isolated from the live session.
  *
  * Isolation has two halves:
- *   - `dbus-run-session` gives the nested Shell its own session bus;
+ *   - `dbus-run-session` gives the nested Shell its own session bus, configured by
+ *     `tmp/devkit/dbus/session.conf`: the stock session config, except that Online
+ *     Accounts and the secret service fail to start and Evolution Data Server runs
+ *     on its own state in `tmp/devkit/eds/` (`writeBusConfig`);
  *   - `DCONF_PROFILE` points dconf at `~/.config/dconf/hardbreak_devkit`, so
  *     `enabled-extensions` and every `org.gnome.shell.extensions.hardbreak` key written in
  *     there never touch the live desktop's settings.
@@ -15,7 +18,7 @@
 
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { fail, firstRun, root, writeProfile } from './devkit-common.js';
+import { edsDir, fail, firstRun, root, writeBusConfig, writeProfile } from './devkit-common.js';
 import { dist, installDist, target } from './install-common.js';
 
 // The devkit must run the tree that is on disk *now*, so the preflight is the
@@ -29,6 +32,7 @@ console.log(
 );
 
 const profile = writeProfile();
+const { config: busConfig, eds } = writeBusConfig();
 const inner = join(root, 'scripts', 'devkit-inner.ts');
 
 // `gnome-shell --devkit` runs headless on a virtual monitor and asks Mutter to
@@ -59,9 +63,19 @@ if (!process.env['WAYLAND_DISPLAY']) {
   }
 }
 
+console.log(
+  `devkit: Online Accounts and the secret service are disabled on the private bus (${busConfig})`,
+);
+console.log(
+  eds.length > 0
+    ? `devkit: Evolution Data Server keeps its own state in ${edsDir} (${eds.length} services: ${eds.join(', ')}) — only a devkit-local "Personal" calendar, no online-account calendars`
+    : 'devkit: Evolution Data Server is not installed; calendar pause has no calendars here',
+);
+
 const session = Bun.spawnSync(
   [
     'dbus-run-session',
+    `--config-file=${busConfig}`,
     '--',
     process.execPath,
     'run',
