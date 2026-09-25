@@ -16,7 +16,7 @@ rebase-only git) all apply. Restated here only where this project is specific:
   in, and a Rust daemon + JS overlay would leave all the hard parts in JS. Do not reopen
   this.
 - **bun 1.4 for everything bun can do** — pinned in `mise.toml` and
-  `"packageManager": "bun@1.4.0"`. Install, scripts, running `tsc`, unit tests
+  `"packageManager": "bun@1.4.2"`. Install, scripts, running `tsc`, unit tests
   (`bun test`), `glib-compile-schemas` wrapper scripts. Never npm/npx/yarn/pnpm.
 - **The one thing bun cannot do is run the extension.** The runtime is gnome-shell's own
   JS engine (SpiderMonkey via GJS 1.88), loading `dist/extension.js` / `dist/prefs.js` as
