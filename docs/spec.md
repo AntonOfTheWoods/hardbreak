@@ -120,6 +120,20 @@ keybinding block are identical in both modes.
   guard: one Quick Settings toggle before teaching on a projector. Explicitly *not*
   doing screen-share / mirrored-display auto-pause (rejected as "clever that fires at
   the desk dock").
+- **Calendar** (grilled 2026-09-25; [ADR 0001](adr/0001-calendar-driven-pauses.md),
+  terms in `CONTEXT.md`). Timed events in **watched calendars** (ticked in preferences,
+  stored as EDS source uids in `watched-calendars`) are **busy events**, and while one
+  holds, breaks are in **calendar pause**. Recurrences and exceptions come from the
+  calendar via Evolution Data Server; hardbreak has no rule editor. All-day events never
+  count, and there is no per-event keyword escape. **Lead shadow**: no break may start
+  whose warning + duration would not finish 60 s before a busy event begins (a constant).
+  When a busy event ends, a fresh cycle starts. A busy event that becomes active during a
+  break (a late calendar edit) interrupts it, and the break is not owed; this makes the
+  calendar a deliberate bypass even in strict mode. Menu status: "Busy until HH:MM", or
+  "Busy at HH:MM" during the lead shadow, never showing the event title. If EDS or its
+  GI bindings are unavailable, the gate is inert and breaks continue. Busy events already
+  fetched (a rolling 48-hour window) keep gating, warnings go to the journal only, and
+  DND stays the manual backstop.
 
 ## 4. Overlay
 
@@ -204,6 +218,10 @@ Revisit e.g.o only if it is wanted on a second machine (tsc output is review-rea
 *Addendum, 2026-08-27 (decision reversed).* Publish on e.g.o and as GitHub release zips;
 see the README. The soft/strict switch (Q1 revisit) is decided — see the §2 addendum.
 Remaining decision for publication: supported Shell versions (48–50 wanted, only 50 tested).
+
+*Addendum, 2026-09-25.* Shell 50 only (decided 2026-08-27). extensions.gnome.org declined
+the submission because the extension is LLM-written, so distribution is GitHub release zips
+only, with no resubmission.
 
 ## 11. Cut-over from Stretchly (Q12a)
 
