@@ -17,11 +17,12 @@
  *   and delivers the callback on the thread-default main context of the
  *   caller, i.e. the Shell's main loop. There are no `*_sync` D-Bus calls, and
  *   no `ECal.ClientView`: its `start()`/`stop()` are synchronous D-Bus calls
- *   with no async variant in libecal 3.56. Live updates come from the client's
- *   `backend-property-changed` signal for `revision`, which the file backend
- *   and every `ECalMetaBackend` (Microsoft 365, EWS, CalDAV, Google) bump on
- *   each change, and which libecal emits from an idle source on the client's
- *   main context.
+ *   with no async variant in libecal 3.56. Change notifications come from the
+ *   client's `backend-property-changed` signal for `revision`, which the file
+ *   backend and every `ECalMetaBackend` (Microsoft 365, EWS, CalDAV, Google)
+ *   bump when their local copy changes (for an online calendar, after EDS's
+ *   own timed sync, not when the server changes), and which libecal emits from
+ *   an idle source on the client's main context.
  * - **Main thread only.** Recurrences are expanded with
  *   `ECal.recur_generate_instances_sync()`: plain CPU work over components
  *   already fetched, with both callbacks invoked synchronously on this thread

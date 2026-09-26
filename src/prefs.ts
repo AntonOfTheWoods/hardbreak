@@ -138,7 +138,8 @@ function buildCalendar(
 ): Adw.PreferencesGroup {
   const group = new Adw.PreferencesGroup({
     title: 'Calendar',
-    description: 'Timed events in watched calendars pause breaks. All-day events never do.',
+    description:
+      'Timed events in watched calendars pause breaks. All-day events never do. Changes made on other devices arrive when Evolution Data Server next syncs, which can take up to 30 minutes.',
   });
   const placeholder = new Adw.ActionRow({ title: 'Loading calendars…' });
   placeholder.add_suffix(new Adw.Spinner({ valign: Gtk.Align.CENTER }));

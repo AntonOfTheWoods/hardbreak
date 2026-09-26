@@ -354,11 +354,16 @@ The 30 s margin is a constant (`WATCHDOG_MARGIN_MS`), not a setting (spec §2).
     worker or libecal's D-Bus thread, callback on the caller's thread-default context — the
     Shell's main loop. There is no `ECal.ClientView`: its `start()`/`stop()`/`set_flags()`
     are synchronous D-Bus calls (`e_dbus_calendar_view_call_start_sync`) with no async
-    variant in libecal 3.56. Live updates come from the client's `backend-property-changed`
+    variant in libecal 3.56. Change notifications come from the client's `backend-property-changed`
     for `revision`, which the file backend and every `ECalMetaBackend` (Microsoft 365, EWS,
     CalDAV, Google) bump on each stored change; libecal emits it from an idle source on the
     client's main context (the thread-default context at `connect()`), so on the main thread.
-    Identical revision values are ignored. `ECal.Client.generate_instances()` is not used:
+    Identical revision values are ignored. The revision changes when EDS's *local* copy
+    changes. For an online calendar that is after EDS's own sync: on first open (login),
+    then every `[Refresh] IntervalMinutes` (30 for Microsoft 365), and after the network
+    returns at most hourly. hardbreak does not call `ECal.Client.refresh()`, so an edit made
+    on another device reaches the scheduler only after the next sync (spec §3, 2026-09-26
+    addendum). `ECal.Client.generate_instances()` is not used:
     in 3.56 its callback does run on the main thread, but it resolves time zones through
     `e_cal_client_tzlookup_cb()`, which falls back to a synchronous D-Bus `GetTimezone`
     on a cache miss, and it gives JavaScript no completion signal.

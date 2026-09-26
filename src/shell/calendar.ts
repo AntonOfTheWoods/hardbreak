@@ -273,8 +273,10 @@ interface Entry {
  * - each watched calendar is opened with `ECal.Client.connect` and read for
  *   the window now → +48 h;
  * - a change of the calendar's contents (its backend `revision`) reads it
- *   again, so a late edit from a phone reaches the scheduler within one read —
- *   mid-break included;
+ *   again, mid-break included. The revision moves when EDS's local copy
+ *   changes. For an online calendar that is after EDS's own sync (at login,
+ *   then every refresh interval, 30 min for Microsoft 365), so an edit made on
+ *   another device arrives only then; nothing here asks EDS to sync sooner;
  * - the window moves on every {@link CALENDAR_REFRESH_MS}, on {@link refresh}
  *   (the extension calls it when the user comes back) and when the watched
  *   set changes; a calendar that failed to open is tried again then, and once

@@ -134,6 +134,14 @@ keybinding block are identical in both modes.
   GI bindings are unavailable, the gate is inert and breaks continue. Busy events already
   fetched (a rolling 48-hour window) keep gating, warnings go to the journal only, and
   DND stays the manual backstop.
+  - *Addendum, 2026-09-26 (sync latency, observed on this machine).* hardbreak reacts as
+    soon as EDS's local copy changes, but EDS only pulls online calendars when a calendar
+    is first opened (login), then every `[Refresh] IntervalMinutes` (30 for Microsoft 365).
+    When the network returns it refreshes at most once an hour. hardbreak does not request
+    syncs (Anton, 2026-09-26: leave it at that for now; the option was a sync at start, on
+    return and every 5 min). So an edit made on another device takes up to ~30 min to take
+    effect, and longer after a resume. The "late calendar edit" interrupt above is
+    therefore **not** a quick remote off switch; DND is the immediate one.
 
 ## 4. Overlay
 

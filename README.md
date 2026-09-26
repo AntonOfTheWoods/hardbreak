@@ -134,11 +134,18 @@ Only timed events count. **All-day events, events marked free** (Outlook's "Show
 Use a **dedicated calendar** — "Classes", say — rather than your main one: watching the main
 calendar pauses breaks in every meeting you have.
 
-Edits reach hardbreak as soon as Evolution Data Server has them — how soon that is depends on
-the account's sync — including edits from your phone.
-An event that is already on when it arrives ends a running break — **in strict mode too**.
-That is deliberate: a synced calendar is a remote off switch for the wall. The break is not
-owed afterwards.
+**Calendar changes are not instant.** hardbreak reacts as soon as Evolution Data Server
+(EDS) has a change, but EDS only fetches online calendars on a timer. It syncs when the
+calendar is first opened (at login), then every refresh interval: 30 minutes for Microsoft
+365 accounts. When the network comes back after a suspend it syncs again, but at most once
+an hour. hardbreak does not ask EDS to sync sooner. So an event you add, move or delete on
+your phone or on the web can take **up to 30 minutes** to count, longer just after waking
+the laptop. Put classes in the calendar ahead of time. For anything at short notice, use
+Do Not Disturb, which takes effect immediately.
+
+Once a change does arrive, an event that is already on ends a running break, **in strict
+mode too**. That is deliberate, and the break is not owed afterwards, but because of the
+sync delay it is not a quick way out of a break.
 
 It needs Evolution Data Server's introspection data, which the Shell itself does not pull in:
 

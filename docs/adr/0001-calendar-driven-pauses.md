@@ -38,10 +38,12 @@ every timed event in them is a **busy event** that holds the **calendar pause** 
 - Two obvious EDS APIs are deliberately not used; checked against the EDS 3.56.2 source
   during implementation. Don't "fix" these back.
   - `ECalClientView`: its `start()`, `stop()` and `set_flags()` are synchronous D-Bus calls
-    (`e_dbus_calendar_view_call_*_sync`) with no async variant. Live updates come from the
-    client's `backend-property-changed` signal for `revision`, which the file backend and
-    every meta backend (Microsoft 365, EWS, CalDAV, Google) bump on change. It is emitted
-    from an idle source on the main context.
+    (`e_dbus_calendar_view_call_*_sync`) with no async variant. Change notifications come
+    from the client's `backend-property-changed` signal for `revision`, which the file
+    backend and every meta backend (Microsoft 365, EWS, CalDAV, Google) bump when their
+    *local* copy changes. For an online calendar that means after EDS's own sync, not when
+    the server changes (see the last consequence). It is emitted from an idle source on the
+    main context.
   - `ESourceRegistry`: its dispose iterates the creator's main context. When GJS drops the
     last reference during context teardown, gnome-shell segfaults on exit. The Shell opens
     clients from scratch `ESource`s (`new_with_uid`, no D-Bus). Prefs lists calendars over
@@ -53,5 +55,11 @@ every timed event in them is a **busy event** that holds the **calendar pause** 
   window) keep gating until they end, but a dead EDS means new or edited events are
   missed. The warning goes to the journal only. Do Not Disturb stays the manual backstop.
 - A calendar event covering "now" ends a running break and silences hardbreak, including
-  in strict mode. This bypass is accepted on purpose: a synced calendar gives a
-  remote kill switch from a phone.
+  in strict mode. This bypass is accepted on purpose.
+- Latency is EDS's sync interval, not hardbreak's. EDS pulls an online calendar when it is
+  first opened (login), then every `[Refresh] IntervalMinutes` (30 for Microsoft 365), and
+  after the network returns at most once an hour. An edit made on another device can
+  therefore take ~30 minutes or more to count. That makes the bypass above no quick
+  "remote kill switch from a phone", as first assumed. hardbreak could shorten the delay
+  by calling the async `ECal.Client.refresh()` itself (at start, on return, every few
+  minutes); on 2026-09-26 Anton decided to leave it at EDS's own cadence for now.
