@@ -257,8 +257,9 @@ the system chime — and an empty string means silence.
 
 ## Install
 
-hardbreak is **not on extensions.gnome.org**: the submission was declined because the
-extension was written with an LLM. Install it from a release zip or from source.
+hardbreak is **not on extensions.gnome.org**: its reviewers are not currently processing
+AI-assisted submissions, however they are written, and hardbreak was developed with an AI
+assistant. Install it from a release zip or from source.
 
 **From a release zip** ([Releases](https://github.com/AntonOfTheWoods/hardbreak/releases)):
 

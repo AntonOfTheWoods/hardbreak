@@ -227,8 +227,9 @@ Revisit e.g.o only if it is wanted on a second machine (tsc output is review-rea
 see the README. The soft/strict switch (Q1 revisit) is decided — see the §2 addendum.
 Remaining decision for publication: supported Shell versions (48–50 wanted, only 50 tested).
 
-*Addendum, 2026-09-25.* Shell 50 only (decided 2026-08-27). extensions.gnome.org declined
-the submission because the extension is LLM-written, so distribution is GitHub release zips
+*Addendum, 2026-09-25.* Shell 50 only (decided 2026-08-27). extensions.gnome.org's reviewers
+are not currently processing AI-assisted submissions, however well written (wording corrected
+2026-09-26: it was not a rejection on the merits), so distribution is GitHub release zips
 only, with no resubmission.
 
 ## 11. Cut-over from Stretchly (Q12a)
