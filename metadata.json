@@ -1,7 +1,7 @@
 {
   "uuid": "hardbreak@melser.org",
   "name": "hardbreak",
-  "description": "Screen breaks on every monitor, with a countdown and stretch ideas. Skip breaks by default, or enable Strict mode to enforce them. Pause from the panel menu or with Do Not Disturb.",
+  "description": "Screen breaks on every monitor, with a countdown and stretch ideas. Skip breaks by default, or enable Strict mode to enforce them. Pause from the panel menu, with Do Not Disturb, or automatically during events in calendars you choose.",
   "shell-version": ["50"],
   "session-modes": ["user", "unlock-dialog"],
   "settings-schema": "org.gnome.shell.extensions.hardbreak",

@@ -4,7 +4,9 @@ A GNOME Shell extension that makes you take screen breaks. At the appointed time
 every monitor with an overlay that owns the input grab: you cannot alt-tab away from it,
 cannot put anything in front of it and cannot close it — it goes away when the break is
 over. By default it offers a Skip button and Escape; turn on **strict mode** and it does
-not, and the countdown is the only way out. Because it runs inside gnome-shell itself it
+not, and the countdown is the only way out. It can also stay out of your way during events
+in a calendar you choose, such as the classes you teach (see
+[Calendar pause](#calendar-pause)). Because it runs inside gnome-shell itself it
 adds no processes, no tray app and no background service: the whole thing is the Shell's
 own timers and actors.
 
@@ -120,45 +122,92 @@ owing you six breaks.
 
 ### Calendar pause
 
-Tick one or more calendars in the preferences (the **Calendar** group) and every timed event
-in them pauses breaks: no break starts while the event is on, the panel menu says "Busy until
-11:30" (never the event's title), and when it is over the cycle starts afresh. A break also
-keeps clear of the event's start: none begins if its warning and the break itself would not be
-over 60 seconds before the event does — the _lead shadow_, during which the menu says "Busy at
-10:00". Recurring events, cancelled occurrences and moved ones come from the calendar itself;
-there is no rule editor in hardbreak.
+If your breaks must stay away from fixed commitments (teaching a class on a projector, say),
+put those commitments in a calendar and tell hardbreak to watch it. While an event from a
+watched calendar is on, no break happens, and hardbreak also keeps breaks clear of the few
+minutes before it starts. You maintain the timetable in your calendar app, recurrences and
+exceptions included ("every Monday for 14 weeks except the 3rd and 10th"). hardbreak has no
+rule editor of its own.
 
-Only timed events count. **All-day events, events marked free** (Outlook's "Show as: Free")
-**and cancelled events never pause anything.**
+#### Setting it up
 
-Use a **dedicated calendar** — "Classes", say — rather than your main one: watching the main
-calendar pauses breaks in every meeting you have.
+1. Install Evolution Data Server's introspection data, which GNOME Shell does not pull in:
 
-**Calendar changes are not instant.** hardbreak reacts as soon as Evolution Data Server
-(EDS) has a change, but EDS only fetches online calendars on a timer. It syncs when the
-calendar is first opened (at login), then every refresh interval: 30 minutes for Microsoft
-365 accounts. When the network comes back after a suspend it syncs again, but at most once
-an hour. hardbreak does not ask EDS to sync sooner. So an event you add, move or delete on
-your phone or on the web can take **up to 30 minutes** to count, longer just after waking
-the laptop. Put classes in the calendar ahead of time. For anything at short notice, use
-Do Not Disturb, which takes effect immediately.
+   ```sh
+   sudo apt install gir1.2-ecal-2.0 gir1.2-edataserver-1.2 gir1.2-ical-3.0
+   ```
 
-Once a change does arrive, an event that is already on ends a running break, **in strict
-mode too**. That is deliberate, and the break is not owed afterwards, but because of the
-sync delay it is not a quick way out of a break.
+   plus the backend for your account: `evolution-ews-core` for Microsoft 365 and Exchange.
+   Google, CalDAV and local calendars are handled by `evolution-data-server` itself.
 
-It needs Evolution Data Server's introspection data, which the Shell itself does not pull in:
+2. Add the account in _Settings → Online Accounts_ with **Calendar** switched on. No
+   calendar app has to run: GNOME's own Evolution Data Server (EDS) service does the
+   syncing.
+3. Create a **dedicated calendar** for the events that should pause breaks ("Classes", say)
+   and put the events in it. Don't watch your main calendar: that would pause breaks in
+   every meeting you have.
+4. Open hardbreak's preferences (_Extensions → hardbreak → ⚙_) and switch that calendar on
+   in the **Calendar** group. The group lists every calendar EDS knows about. It is stored
+   in the `watched-calendars` setting.
+
+A calendar created in your online account after you logged in may not be listed yet. EDS
+usually discovers new calendars on an account only at the next login. Log out and back in,
+then open the preferences again.
+
+#### What counts
+
+Only **timed** events in watched calendars count. **All-day events, events marked free**
+(Outlook's "Show as: Free") **and cancelled events never pause anything.** Recurring events,
+cancelled occurrences and moved occurrences come from the calendar exactly as it shows them.
+
+#### What happens around an event
+
+- **Before it (the lead shadow).** A break never starts unless its warning and the break
+  itself would be over 60 seconds before the event begins. With the default schedule that
+  means breaks stop about 4½ minutes before an event when a long break is next (30 s
+  warning + 3 min break + 1 min margin), or about 2 minutes when a mini break is next. From
+  then on the panel menu says "Busy at 10:00". No break is started, and no warning given,
+  inside that window.
+- **During it.** No breaks, and the panel menu says "Busy until 11:30". Event titles are
+  never shown. Back-to-back or overlapping events count as one stretch.
+- **After it.** The cycle starts afresh: the next break is a mini break (with the default alternation), a full interval
+  (30 minutes by default) after the event ends. Breaks skipped during the event are not
+  made up.
+- **An event that begins during a running break** (possible only if a calendar change
+  arrives late) ends that break, **in strict mode too**. That is deliberate, and the break is
+  not owed afterwards.
+
+#### How quickly calendar changes arrive
+
+**Not instantly.** hardbreak reacts as soon as EDS has a change, but EDS only fetches online
+calendars on a timer. It syncs when the calendar is first opened (at login), then every
+refresh interval: 30 minutes for Microsoft 365 accounts. When the network comes back after a
+suspend it syncs again, but at most once an hour. hardbreak does not ask EDS to sync sooner.
+So an event you add, move or delete on your phone or on the web can take **up to 30
+minutes** to count, longer just after waking the laptop. Put events in the calendar ahead of
+time. For anything at short notice, use **Do Not Disturb**, which takes effect immediately.
+
+Local calendars ("On This Computer", edited with an app such as GNOME Calendar) have no
+sync step, so their changes count immediately.
+
+#### Checking it works
+
+Open the panel menu while an event is on, or in the minutes just before it: it should say
+"Busy until …" or "Busy at …". Outside those times the menu shows the next break as usual;
+it does not announce upcoming events.
+
+If an event you just created or changed is not taken into account, it has usually not synced
+yet (see above). If a calendar is missing from the preferences, check that the packages from
+step 1 are installed and that the account's Calendar switch is on, then log out and back in.
+Without the packages the preferences say what is missing, and breaks carry on as if no
+calendar were watched.
+
+If EDS stops answering, the events already read (hardbreak looks 48 hours ahead) still pause
+breaks, and a warning goes to the journal:
 
 ```sh
-sudo apt install gir1.2-ecal-2.0 gir1.2-edataserver-1.2 gir1.2-ical-3.0
+journalctl -b -o cat /usr/bin/gnome-shell | grep -i hardbreak
 ```
-
-plus the backend for your account: `evolution-ews-core` for Microsoft 365 and Exchange
-(Google, CalDAV and local calendars are part of `evolution-data-server`). Add the account in
-_Settings → Online Accounts_. Without the packages the preferences say what is missing and
-breaks carry on as if no calendar were watched. If Evolution Data Server stops answering, the
-events already read (hardbreak looks 48 hours ahead) still pause breaks, and a warning goes to
-the journal; Do Not Disturb remains the manual switch.
 
 ### Why it keeps running on the lock screen
 
@@ -208,8 +257,8 @@ the system chime — and an empty string means silence.
 
 ## Install
 
-**From extensions.gnome.org** — pending review; this section will carry the link once it
-is published.
+hardbreak is **not on extensions.gnome.org**: the submission was declined because the
+extension was written with an LLM. Install it from a release zip or from source.
 
 **From a release zip** ([Releases](https://github.com/AntonOfTheWoods/hardbreak/releases)):
 
